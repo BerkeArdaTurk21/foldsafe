@@ -50,6 +50,11 @@ ruff format --check .
 pytest
 ```
 
+Every rule is specified by labeled examples before it is implemented:
+[`examples/`](examples/) holds leaky scripts with `# foldsafe-expect: FS00x` markers and
+clean counterparts, including near misses that must not be flagged. The test suite checks
+the analyzer against all of them. See [`examples/README.md`](examples/README.md) to add one.
+
 ## License
 
 MIT
