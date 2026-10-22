@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foldsafe"
+dynamic = ["version"]
+description = "Catch data leakage in ML code before your metrics lie to you. Static analyzer + agent skill."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Berke Arda Türk" }]
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12",
+]
+keywords = ["machine-learning", "data-leakage", "static-analysis", "linter", "scikit-learn", "jupyter", "agent-skills"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+foldsafe = "foldsafe.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/BerkeArdaTurk21/foldsafe"
+Issues = "https://github.com/BerkeArdaTurk21/foldsafe/issues"
+
+[tool.hatch.version]
+path = "src/foldsafe/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foldsafe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Example files are intentionally leaky ML code, not part of the package.
+extend-exclude = ["examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
