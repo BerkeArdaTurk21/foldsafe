@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Data-flow foundation (`foldsafe.flow`, `foldsafe.values`): import/alias resolution, data
+  sources (`read_csv`, `np.load`, `sklearn.datasets`), row origins (full / train / test /
+  combined) and how they propagate through columns, methods, arithmetic and `concat`.
 - Labeled example corpus: 18 leaky and 18 clean scripts covering FS001–FS008, with
   `# foldsafe-expect` markers and a precedence table (one finding per leak).
 - Rule catalog (`foldsafe.rules.RULES`), `Finding` type, and `analyze_source()` entry point;
