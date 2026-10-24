@@ -2,6 +2,7 @@
 
 The pass walks module-level statements top to bottom, including the bodies of
 if/for/while/with/try blocks, and keeps an abstract value for each variable.
+Along the way it records events (splits, cross-validation) for the rule checkers.
 Function and class bodies are not analyzed. Code is parsed, never executed.
 """
 
@@ -10,7 +11,20 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
-from foldsafe.values import DataValue, Origin, merge_data
+from foldsafe.events import CVEvent, Event, SplitEvent
+from foldsafe.values import (
+    DataValue,
+    Enumerated,
+    FoldIndices,
+    IndexValue,
+    Origin,
+    SearchValue,
+    SplitParts,
+    SplitterValue,
+    TrackedValue,
+    Value,
+    merge_data,
+)
 
 # Calls that load a dataset. A file name containing "test" yields TEST rows.
 FILE_READERS = {
@@ -39,18 +53,66 @@ ROW_COMBINERS = {
     "numpy.column_stack",
 }
 
+MODEL_SELECTION = "sklearn.model_selection"
+TRAIN_TEST_SPLIT = f"{MODEL_SELECTION}.train_test_split"
+
+# Splitter class -> whether it shuffles rows when `shuffle` is not given.
+SPLITTERS = {
+    f"{MODEL_SELECTION}.{name}": shuffles_by_default
+    for name, shuffles_by_default in {
+        "KFold": False,
+        "StratifiedKFold": False,
+        "GroupKFold": False,
+        "StratifiedGroupKFold": False,
+        "TimeSeriesSplit": False,
+        "LeaveOneOut": False,
+        "LeavePOut": False,
+        "LeaveOneGroupOut": False,
+        "PredefinedSplit": False,
+        "RepeatedKFold": True,
+        "RepeatedStratifiedKFold": True,
+        "ShuffleSplit": True,
+        "StratifiedShuffleSplit": True,
+        "GroupShuffleSplit": True,
+    }.items()
+}
+
+SEARCHES = {
+    f"{MODEL_SELECTION}.{name}"
+    for name in (
+        "GridSearchCV",
+        "RandomizedSearchCV",
+        "HalvingGridSearchCV",
+        "HalvingRandomSearchCV",
+    )
+}
+
+# Functions that cross-validate an estimator; X is their second argument.
+CV_FUNCTIONS = {
+    f"{MODEL_SELECTION}.{name}"
+    for name in (
+        "cross_val_score",
+        "cross_validate",
+        "cross_val_predict",
+        "learning_curve",
+        "validation_curve",
+        "permutation_test_score",
+    )
+}
+
 
 @dataclass
 class FlowState:
     """What the pass knows after the last statement."""
 
     imports: dict[str, str] = field(default_factory=dict)  # local name -> qualified name
-    env: dict[str, DataValue] = field(default_factory=dict)
+    env: dict[str, TrackedValue] = field(default_factory=dict)
+    events: list[Event] = field(default_factory=list)
 
 
 class FlowAnalyzer:
-    def __init__(self) -> None:
-        self.state = FlowState()
+    def __init__(self, state: FlowState | None = None) -> None:
+        self.state = state or FlowState()
 
     # ------------------------------------------------------------------ names
 
@@ -79,43 +141,163 @@ class FlowAnalyzer:
 
     # ------------------------------------------------------------ expressions
 
-    def eval_expr(self, node: ast.expr | None) -> DataValue | None:
-        """Abstract value of an expression; None when it is not tracked data."""
+    def eval_expr(self, node: ast.expr | None) -> Value | None:
+        """Abstract value of an expression; None when it is not tracked."""
         if node is None:
             return None
         if isinstance(node, ast.Name):
             return self.state.env.get(node.id)
         if isinstance(node, ast.Call):
             return self.eval_call(node)
-        if isinstance(node, (ast.Attribute, ast.Subscript)):
-            # df.values, df["col"], df.iloc[:10] keep the rows of df.
-            return self.eval_expr(node.value)
+        if isinstance(node, ast.Subscript):
+            return self.eval_subscript(node)
+        if isinstance(node, ast.Attribute):
+            # df.values, df.iloc keep the rows of df.
+            return self.as_data(self.eval_expr(node.value))
         if isinstance(node, ast.BinOp):
             return merge_data(self.data_operands([node.left, node.right]))
         if isinstance(node, ast.UnaryOp):
-            return self.eval_expr(node.operand)
+            return self.as_data(self.eval_expr(node.operand))
         if isinstance(node, (ast.List, ast.Tuple)):
             return merge_data(self.data_operands(node.elts))
+        self.evaluate_children(node)
         return None
 
-    def eval_call(self, node: ast.Call) -> DataValue | None:
+    def eval_subscript(self, node: ast.Subscript) -> DataValue | None:
+        base = self.as_data(self.eval_expr(node.value))
+        index = self.eval_expr(node.slice)
+        if base is not None and isinstance(index, IndexValue):
+            # X.iloc[train_idx] holds the training rows of X.
+            return DataValue(index.side, base.taints)
+        return base  # df["col"], df.iloc[:10] keep the rows of df
+
+    def eval_call(self, node: ast.Call) -> Value | None:
         name = self.qualified_name(node.func)
         if name in FILE_READERS:
             return DataValue(Origin.TEST if self.names_test_file(node) else Origin.FULL)
         if name in IN_MEMORY_SOURCES or (name and name.startswith(DATASET_PREFIXES)):
+            self.evaluate_arguments(node)
             return DataValue(Origin.FULL)
         if name in ROW_COMBINERS:
             return merge_data(self.data_operands(node.args))
-        if isinstance(node.func, ast.Attribute):
-            receiver = self.eval_expr(node.func.value)
-            if receiver is not None:
-                # A method on data (drop, fillna, median, to_numpy, ...) keeps its rows.
-                return merge_data([receiver, *self.data_operands(node.args)])
+        if name == TRAIN_TEST_SPLIT:
+            return self.train_test_split(node)
+        if name in CV_FUNCTIONS:
+            self.cross_validation(node, name, data_node=self.argument(node, 1, "X"))
+            return None
+        if name in SPLITTERS:
+            self.evaluate_arguments(node)
+            return SplitterValue(name, self.keyword_flag(node, "shuffle", SPLITTERS[name]))
+        if name in SEARCHES:
+            self.evaluate_arguments(node)
+            return SearchValue(name, self.cv_shuffles(node))
+        if name is None and isinstance(node.func, ast.Attribute):
+            return self.method_call(node, node.func)
+        if isinstance(node.func, ast.Name) and node.func.id == "enumerate" and node.args:
+            item = self.eval_expr(node.args[0])
+            return Enumerated(item) if isinstance(item, FoldIndices) else None
+        self.evaluate_arguments(node)  # print(cross_val_score(...)) still records the event
         return None
 
+    def method_call(self, node: ast.Call, func: ast.Attribute) -> Value | None:
+        receiver = self.eval_expr(func.value)
+        if isinstance(receiver, SplitterValue) and func.attr == "split":
+            inputs = self.data_operands(node.args)
+            self.record(SplitEvent(node.lineno, "cv_split", tuple(inputs), receiver.shuffled))
+            return FoldIndices()
+        if isinstance(receiver, SearchValue) and func.attr == "fit":
+            self.cross_validation(
+                node, f"{receiver.cls}.fit", self.argument(node, 0, "X"), receiver.shuffled
+            )
+            return None
+        if isinstance(receiver, DataValue):
+            # A method on data (drop, fillna, median, to_numpy, ...) keeps its rows.
+            return merge_data([receiver, *self.data_operands(self.argument_nodes(node))])
+        self.evaluate_arguments(node)
+        return None
+
+    def train_test_split(self, node: ast.Call) -> SplitParts:
+        inputs = [self.as_data(self.eval_expr(arg)) for arg in node.args]
+        self.evaluate_keywords(node)
+        tracked = tuple(value for value in inputs if value is not None)
+        shuffled = self.keyword_flag(node, "shuffle", True)
+        self.record(SplitEvent(node.lineno, "train_test_split", tracked, shuffled))
+        parts: list[DataValue | None] = []
+        for value in inputs:
+            if value is None:
+                parts.extend([None, None])
+            else:
+                parts.extend(
+                    [DataValue(Origin.TRAIN, value.taints), DataValue(Origin.TEST, value.taints)]
+                )
+        return SplitParts(tuple(parts))
+
+    def cross_validation(
+        self,
+        node: ast.Call,
+        consumer: str,
+        data_node: ast.expr | None,
+        shuffled: bool | None = None,
+    ) -> None:
+        data = self.as_data(self.eval_expr(data_node))
+        for other in self.argument_nodes(node):
+            if other is not data_node:
+                self.eval_expr(other)  # nested searches, estimators, y
+        if shuffled is None:
+            shuffled = self.cv_shuffles(node)
+        self.record(CVEvent(node.lineno, consumer, data, shuffled))
+
+    def cv_shuffles(self, node: ast.Call) -> bool:
+        cv = self.eval_expr(self.keyword(node, "cv"))
+        return isinstance(cv, SplitterValue) and cv.shuffled
+
+    # ---------------------------------------------------------------- helpers
+
+    def record(self, event: Event) -> None:
+        self.state.events.append(event)
+
+    @staticmethod
+    def as_data(value: Value | None) -> DataValue | None:
+        return value if isinstance(value, DataValue) else None
+
     def data_operands(self, nodes: list[ast.expr]) -> list[DataValue]:
-        values = (self.eval_expr(node) for node in nodes)
+        values = (self.as_data(self.eval_expr(node)) for node in nodes)
         return [value for value in values if value is not None]
+
+    @staticmethod
+    def argument_nodes(node: ast.Call) -> list[ast.expr]:
+        return [*node.args, *(keyword.value for keyword in node.keywords)]
+
+    def evaluate_arguments(self, node: ast.Call) -> None:
+        for argument in self.argument_nodes(node):
+            self.eval_expr(argument)
+
+    def evaluate_keywords(self, node: ast.Call) -> None:
+        for keyword in node.keywords:
+            self.eval_expr(keyword.value)
+
+    def evaluate_children(self, node: ast.AST) -> None:
+        """Visit sub-expressions of an untracked expression so nested calls still count."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                self.eval_expr(child)
+
+    @staticmethod
+    def argument(node: ast.Call, position: int, name: str) -> ast.expr | None:
+        if len(node.args) > position:
+            return node.args[position]
+        return FlowAnalyzer.keyword(node, name)
+
+    @staticmethod
+    def keyword(node: ast.Call, name: str) -> ast.expr | None:
+        return next((kw.value for kw in node.keywords if kw.arg == name), None)
+
+    @staticmethod
+    def keyword_flag(node: ast.Call, name: str, default: bool) -> bool:
+        value = FlowAnalyzer.keyword(node, name)
+        if isinstance(value, ast.Constant) and isinstance(value.value, bool):
+            return value.value
+        return default
 
     @staticmethod
     def names_test_file(node: ast.Call) -> bool:
@@ -150,6 +332,7 @@ class FlowAnalyzer:
         elif isinstance(node, ast.Expr):
             self.eval_expr(node.value)
         elif isinstance(node, (ast.If, ast.While)):
+            self.eval_expr(node.test)
             self.visit_block(node.body)
             self.visit_block(node.orelse)
         elif isinstance(node, ast.For):
@@ -166,26 +349,40 @@ class FlowAnalyzer:
             self.visit_block(node.finalbody)
         # FunctionDef, ClassDef and the rest are out of scope for v0.1.
 
-    def bind(self, target: ast.expr, value: DataValue | None) -> None:
-        if isinstance(target, ast.Name):
-            if value is None:
-                self.state.env.pop(target.id, None)
-            else:
-                self.state.env[target.id] = value
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            # `X, y = load_iris(return_X_y=True)`: every part comes from the same rows.
-            for element in target.elts:
-                self.bind(element, value)
+    def bind(self, target: ast.expr, value: Value | None) -> None:
+        if isinstance(target, (ast.Tuple, ast.List)):
+            self.bind_sequence(target.elts, value)
         elif isinstance(target, ast.Starred):
             self.bind(target.value, value)
+        elif isinstance(target, ast.Name):
+            if isinstance(value, (DataValue, SplitterValue, SearchValue, IndexValue)):
+                self.state.env[target.id] = value
+            else:
+                self.state.env.pop(target.id, None)
         elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
             # `df["new"] = ...` adds a column: df keeps its rows and gains the value's taints.
             current = self.state.env.get(target.value.id)
-            if current is not None and value is not None:
+            if isinstance(current, DataValue) and isinstance(value, DataValue):
                 self.state.env[target.value.id] = DataValue(
                     current.origin, current.taints | value.taints
                 )
 
+    def bind_sequence(self, targets: list[ast.expr], value: Value | None) -> None:
+        if isinstance(value, SplitParts) and len(targets) == len(value.parts):
+            for target, part in zip(targets, value.parts, strict=True):
+                self.bind(target, part)
+        elif isinstance(value, FoldIndices) and len(targets) == 2:
+            self.bind(targets[0], IndexValue(Origin.TRAIN))
+            self.bind(targets[1], IndexValue(Origin.TEST))
+        elif isinstance(value, Enumerated) and len(targets) == 2:
+            self.bind(targets[0], None)
+            self.bind(targets[1], value.item)
+        else:
+            # `X, y = load_iris(return_X_y=True)`: every part comes from the same rows.
+            part = value if isinstance(value, DataValue) else None
+            for target in targets:
+                self.bind(target, part)
 
-def run_flow(tree: ast.Module) -> FlowState:
-    return FlowAnalyzer().run(tree)
+
+def run_flow(tree: ast.Module, state: FlowState | None = None) -> FlowState:
+    return FlowAnalyzer(state).run(tree)

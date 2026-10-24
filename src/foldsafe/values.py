@@ -31,6 +31,55 @@ class DataValue:
     taints: frozenset[Taint] = frozenset()
 
 
+@dataclass(frozen=True)
+class SplitterValue:
+    """A cross-validation splitter object such as KFold(shuffle=True)."""
+
+    cls: str  # qualified class name
+    shuffled: bool  # rows are shuffled before they are assigned to folds
+
+
+@dataclass(frozen=True)
+class SearchValue:
+    """A hyperparameter search object such as GridSearchCV(...)."""
+
+    cls: str
+    shuffled: bool  # its cv splitter shuffles rows
+
+
+@dataclass(frozen=True)
+class IndexValue:
+    """Row positions of one side of a fold: `train_idx` or `test_idx`."""
+
+    side: Origin  # TRAIN or TEST
+
+
+# Transient values: they only exist while a statement is being evaluated.
+
+
+@dataclass(frozen=True)
+class SplitParts:
+    """Result of train_test_split: (a_train, a_test, b_train, b_test, ...)."""
+
+    parts: tuple[DataValue | None, ...]
+
+
+@dataclass(frozen=True)
+class FoldIndices:
+    """What iterating over `cv.split(X)` yields: (train_idx, test_idx) pairs."""
+
+
+@dataclass(frozen=True)
+class Enumerated:
+    """`enumerate(x)`: (counter, item) pairs."""
+
+    item: FoldIndices
+
+
+TrackedValue = DataValue | SplitterValue | SearchValue | IndexValue
+Value = TrackedValue | SplitParts | FoldIndices | Enumerated
+
+
 def merge_origins(first: Origin, second: Origin) -> Origin:
     """Origin of a value computed from two others."""
     if first == second:

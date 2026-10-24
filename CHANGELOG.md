@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Split and cross-validation events (`foldsafe.events`): `train_test_split` outputs become
+  train/test values, CV splitters remember whether they shuffle, `for train_idx, test_idx in
+  cv.split(X)` loops mark fold rows, and `cross_val_score`-style calls and `*SearchCV.fit`
+  are recorded with the data they receive.
 - Data-flow foundation (`foldsafe.flow`, `foldsafe.values`): import/alias resolution, data
   sources (`read_csv`, `np.load`, `sklearn.datasets`), row origins (full / train / test /
   combined) and how they propagate through columns, methods, arithmetic and `concat`.
