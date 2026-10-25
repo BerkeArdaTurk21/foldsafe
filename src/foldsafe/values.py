@@ -48,6 +48,16 @@ class SearchValue:
 
 
 @dataclass(frozen=True)
+class EstimatorValue:
+    """An estimator object; `fit_*` fields are set once it has been fitted."""
+
+    cls: str  # qualified class or factory name
+    kind: str  # see catalog.py
+    fit_origin: Origin | None = None  # rows it was last fitted on
+    fit_taint: Taint | None = None  # left on transform output when fitted on full data
+
+
+@dataclass(frozen=True)
 class IndexValue:
     """Row positions of one side of a fold: `train_idx` or `test_idx`."""
 
@@ -58,8 +68,8 @@ class IndexValue:
 
 
 @dataclass(frozen=True)
-class SplitParts:
-    """Result of train_test_split: (a_train, a_test, b_train, b_test, ...)."""
+class DataTuple:
+    """Several data values at once: train_test_split's parts or fit_resample's (X, y)."""
 
     parts: tuple[DataValue | None, ...]
 
@@ -76,8 +86,8 @@ class Enumerated:
     item: FoldIndices
 
 
-TrackedValue = DataValue | SplitterValue | SearchValue | IndexValue
-Value = TrackedValue | SplitParts | FoldIndices | Enumerated
+TrackedValue = DataValue | EstimatorValue | SplitterValue | SearchValue | IndexValue
+Value = TrackedValue | DataTuple | FoldIndices | Enumerated
 
 
 def merge_origins(first: Origin, second: Origin) -> Origin:

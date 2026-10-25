@@ -27,4 +27,16 @@ class CVEvent:
     shuffled: bool  # the cv splitter shuffles rows
 
 
-Event = SplitEvent | CVEvent
+@dataclass(frozen=True)
+class FitEvent:
+    """An estimator learns from data: fit(X), fit_transform(X, y) or fit_resample(X, y)."""
+
+    line: int
+    cls: str
+    kind: str  # see catalog.py
+    method: str  # "fit" | "fit_transform" | "fit_resample"
+    data: DataValue | None  # the X argument; None when it is not tracked
+    uses_y: bool
+
+
+Event = SplitEvent | CVEvent | FitEvent

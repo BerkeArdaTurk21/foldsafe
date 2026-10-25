@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Estimator recognition (`foldsafe.catalog`): preprocessors, target-aware selectors and
+  encoders, imblearn samplers, pipelines (kind taken from their last step) and models.
+  `fit`, `fit_transform` and `fit_resample` are recorded as fit events; a transformer fitted
+  on all rows leaves a taint on everything it outputs, so it can be traced to a later split.
 - Split and cross-validation events (`foldsafe.events`): `train_test_split` outputs become
   train/test values, CV splitters remember whether they shuffle, `for train_idx, test_idx in
   cv.split(X)` loops mark fold rows, and `cross_val_score`-style calls and `*SearchCV.fit`

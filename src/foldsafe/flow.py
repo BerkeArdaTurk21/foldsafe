@@ -2,7 +2,7 @@
 
 The pass walks module-level statements top to bottom, including the bodies of
 if/for/while/with/try blocks, and keeps an abstract value for each variable.
-Along the way it records events (splits, cross-validation) for the rule checkers.
+Along the way it records events (splits, cross-validation, fits) for the rule checkers.
 Function and class bodies are not analyzed. Code is parsed, never executed.
 """
 
@@ -11,20 +11,25 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
-from foldsafe.events import CVEvent, Event, SplitEvent
+from foldsafe.catalog import LEAKY_KINDS, estimator_kind
+from foldsafe.events import CVEvent, Event, FitEvent, SplitEvent
 from foldsafe.values import (
+    DataTuple,
     DataValue,
     Enumerated,
+    EstimatorValue,
     FoldIndices,
     IndexValue,
     Origin,
     SearchValue,
-    SplitParts,
     SplitterValue,
+    Taint,
     TrackedValue,
     Value,
     merge_data,
 )
+
+FIT_METHODS = {"fit", "fit_transform", "fit_resample"}
 
 # Calls that load a dataset. A file name containing "test" yields TEST rows.
 FILE_READERS = {
@@ -191,6 +196,9 @@ class FlowAnalyzer:
         if name in SEARCHES:
             self.evaluate_arguments(node)
             return SearchValue(name, self.cv_shuffles(node))
+        kind = estimator_kind(name) if name else None
+        if kind is not None:
+            return self.construct_estimator(node, name, kind)
         if name is None and isinstance(node.func, ast.Attribute):
             return self.method_call(node, node.func)
         if isinstance(node.func, ast.Name) and node.func.id == "enumerate" and node.args:
@@ -210,13 +218,86 @@ class FlowAnalyzer:
                 node, f"{receiver.cls}.fit", self.argument(node, 0, "X"), receiver.shuffled
             )
             return None
+        if isinstance(receiver, EstimatorValue):
+            return self.estimator_method(node, func, receiver)
         if isinstance(receiver, DataValue):
             # A method on data (drop, fillna, median, to_numpy, ...) keeps its rows.
             return merge_data([receiver, *self.data_operands(self.argument_nodes(node))])
         self.evaluate_arguments(node)
         return None
 
-    def train_test_split(self, node: ast.Call) -> SplitParts:
+    # ------------------------------------------------------------- estimators
+
+    def construct_estimator(self, node: ast.Call, name: str, kind: str) -> EstimatorValue:
+        if kind == "pipeline":
+            kind = self.pipeline_kind(self.pipeline_steps(node, name))
+        else:
+            self.evaluate_arguments(node)
+        return EstimatorValue(name, kind)
+
+    def pipeline_steps(self, node: ast.Call, name: str) -> list[Value | None]:
+        if name.endswith("make_pipeline"):
+            step_nodes = list(node.args)
+        else:
+            steps = self.argument(node, 0, "steps")
+            elements = steps.elts if isinstance(steps, (ast.List, ast.Tuple)) else []
+            # Pipeline([("scale", StandardScaler()), ...]): the estimator is the last item.
+            step_nodes = [el.elts[-1] for el in elements if isinstance(el, ast.Tuple) and el.elts]
+        return [self.eval_expr(step) for step in step_nodes]
+
+    @staticmethod
+    def pipeline_kind(steps: list[Value | None]) -> str:
+        """A pipeline ending in a transformer behaves like one; otherwise it is a safe container."""
+        last = steps[-1] if steps else None
+        if not isinstance(last, EstimatorValue) or last.kind not in ("preprocess", "select"):
+            return "pipeline"
+        kinds = {step.kind for step in steps if isinstance(step, EstimatorValue)}
+        return "select" if "select" in kinds else "preprocess"
+
+    def estimator_method(
+        self, node: ast.Call, func: ast.Attribute, estimator: EstimatorValue
+    ) -> Value | None:
+        method = func.attr
+        x_node = self.argument(node, 0, "X")
+        y_node = self.argument(node, 1, "y")
+        x = self.as_data(self.eval_expr(x_node))
+        y = self.as_data(self.eval_expr(y_node))
+        for other in self.argument_nodes(node):
+            if other is not x_node and other is not y_node:
+                self.eval_expr(other)
+        if method in FIT_METHODS:
+            uses_y = y_node is not None
+            event = FitEvent(node.lineno, estimator.cls, estimator.kind, method, x, uses_y)
+            self.record(event)
+            estimator = self.fitted(estimator, x, node.lineno)
+            if isinstance(func.value, ast.Name):
+                self.state.env[func.value.id] = estimator  # fit() changes the object in place
+        if method == "fit":
+            return estimator  # sklearn's fit returns self
+        if method in ("fit_transform", "transform"):
+            return self.transformed(x, estimator)
+        if method == "fit_resample":
+            return DataTuple((self.transformed(x, estimator), self.transformed(y, estimator)))
+        return None  # predict, score, ... produce no tracked rows
+
+    @staticmethod
+    def fitted(estimator: EstimatorValue, data: DataValue | None, line: int) -> EstimatorValue:
+        origin = data.origin if data is not None else None
+        taint = None
+        if origin is Origin.FULL and estimator.kind in LEAKY_KINDS:
+            taint = Taint(line, estimator.kind)
+        return EstimatorValue(estimator.cls, estimator.kind, origin, taint)
+
+    @staticmethod
+    def transformed(data: DataValue | None, estimator: EstimatorValue) -> DataValue | None:
+        """Output of a transformer: the input rows, plus the fit's taint if it saw all rows."""
+        if data is None:
+            return None
+        if estimator.fit_taint is None:
+            return data
+        return DataValue(data.origin, data.taints | {estimator.fit_taint})
+
+    def train_test_split(self, node: ast.Call) -> DataTuple:
         inputs = [self.as_data(self.eval_expr(arg)) for arg in node.args]
         self.evaluate_keywords(node)
         tracked = tuple(value for value in inputs if value is not None)
@@ -230,7 +311,7 @@ class FlowAnalyzer:
                 parts.extend(
                     [DataValue(Origin.TRAIN, value.taints), DataValue(Origin.TEST, value.taints)]
                 )
-        return SplitParts(tuple(parts))
+        return DataTuple(tuple(parts))
 
     def cross_validation(
         self,
@@ -355,7 +436,9 @@ class FlowAnalyzer:
         elif isinstance(target, ast.Starred):
             self.bind(target.value, value)
         elif isinstance(target, ast.Name):
-            if isinstance(value, (DataValue, SplitterValue, SearchValue, IndexValue)):
+            if isinstance(
+                value, (DataValue, EstimatorValue, SplitterValue, SearchValue, IndexValue)
+            ):
                 self.state.env[target.id] = value
             else:
                 self.state.env.pop(target.id, None)
@@ -368,7 +451,7 @@ class FlowAnalyzer:
                 )
 
     def bind_sequence(self, targets: list[ast.expr], value: Value | None) -> None:
-        if isinstance(value, SplitParts) and len(targets) == len(value.parts):
+        if isinstance(value, DataTuple) and len(targets) == len(value.parts):
             for target, part in zip(targets, value.parts, strict=True):
                 self.bind(target, part)
         elif isinstance(value, FoldIndices) and len(targets) == 2:
