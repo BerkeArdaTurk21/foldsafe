@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 
-from foldsafe.events import SplitEvent
+from foldsafe.events import CVEvent, SplitEvent
 from foldsafe.findings import Finding
 from foldsafe.flow import FlowState
 from foldsafe.rules.info import RULES
@@ -32,6 +32,15 @@ def split_taints(state: FlowState) -> set[Taint]:
     return taints
 
 
+def cv_taints(state: FlowState) -> set[Taint]:
+    """Taints carried by data that enters cross-validation or a hyperparameter search."""
+    taints: set[Taint] = set()
+    for event in state.events:
+        if isinstance(event, CVEvent) and event.data is not None:
+            taints |= event.data.taints
+    return taints
+
+
 def check_fs001(state: FlowState, path: str) -> Iterator[Finding]:
     """A preprocessor fitted on all rows, whose output is split afterwards."""
     leaked = {taint for taint in split_taints(state) if taint.kind == "preprocess"}
@@ -46,7 +55,23 @@ def check_fs001(state: FlowState, path: str) -> Iterator[Finding]:
         )
 
 
+def check_fs002(state: FlowState, path: str) -> Iterator[Finding]:
+    """A selector that learned from y on all rows, whose output is split or cross-validated."""
+    reached = split_taints(state) | cv_taints(state)
+    leaked = {taint for taint in reached if taint.kind == "select"}
+    for taint in sorted(leaked, key=lambda taint: taint.line):
+        yield finding(
+            "FS002",
+            path,
+            taint.line,
+            "Feature selection (or target encoding) learns from the labels of all rows, "
+            "including the rows used for evaluation. Put it inside a Pipeline so each fold "
+            "selects on its own training rows.",
+        )
+
+
 # Implemented checkers, keyed by rule code. Filled in as rules land (M2, M5).
 CHECKERS: dict[str, Checker] = {
     "FS001": check_fs001,
+    "FS002": check_fs002,
 }

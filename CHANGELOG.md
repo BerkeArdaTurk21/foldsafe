@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **FS002** is active: a feature selector or target encoder that learned from the labels of
+  all rows, whose output is split or cross-validated, is reported on the fit line. It takes
+  precedence over FS001 and FS003 for the same fit.
 - **FS001** is active: a preprocessor fitted on all rows whose output is split afterwards
   (by `train_test_split` or a manual `cv.split()` loop) is reported on the fit line.
   Checkers now receive the flow pass's events (`foldsafe.rules.checks`); the rule catalog

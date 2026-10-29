@@ -9,7 +9,9 @@ from foldsafe.findings import Finding, Severity
 
 HEADER = """\
 import pandas as pd
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.feature_selection import SelectKBest
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold, cross_val_score, train_test_split
 from sklearn.preprocessing import StandardScaler
 df = pd.read_csv("train.csv")
 X = df.drop(columns=["target"])
@@ -80,3 +82,33 @@ def test_fs001_ignores_fits_on_training_rows():
         "FS001",
     )
     assert found == []
+
+
+# -------------------------------------------------------------------- FS002
+
+
+def test_fs002_wins_over_fs001_and_fs003_for_selectors():
+    source = """
+        X_best = SelectKBest(k=5).fit_transform(X, y)
+        X_a, X_b = train_test_split(X_best)
+        scores = cross_val_score(LogisticRegression(), X_best, y)
+        """
+    assert lines(findings(source, "FS002")) == [1]
+    assert findings(source, "FS001") == []
+    assert findings(source, "FS003") == []
+
+
+def test_fs002_selection_on_training_rows_is_fine():
+    found = findings(
+        """
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+        selector = SelectKBest(k=5).fit(X_train, y_train)
+        X_test_best = selector.transform(X_test)
+        """,
+        "FS002",
+    )
+    assert found == []
+
+
+def test_fs002_selection_that_is_never_evaluated_is_not_reported():
+    assert findings("X_best = SelectKBest(k=5).fit_transform(X, y)", "FS002") == []
