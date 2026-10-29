@@ -70,8 +70,36 @@ def check_fs002(state: FlowState, path: str) -> Iterator[Finding]:
         )
 
 
+def check_fs003(state: FlowState, path: str) -> Iterator[Finding]:
+    """Data preprocessed on all rows enters cross-validation or a search.
+
+    Reported on the CV call, once per call. A fit whose output is also split is
+    already reported as FS001 and is skipped here.
+    """
+    already_split = split_taints(state)
+    for event in state.events:
+        if not isinstance(event, CVEvent) or event.data is None:
+            continue
+        leaked = {
+            taint
+            for taint in event.data.taints
+            if taint.kind == "preprocess" and taint not in already_split
+        }
+        if leaked:
+            fit_lines = ", ".join(str(line) for line in sorted(taint.line for taint in leaked))
+            yield finding(
+                "FS003",
+                path,
+                event.line,
+                f"Data preprocessed on all rows (fitted on line {fit_lines}) is cross-validated, "
+                "so every validation fold was seen by the preprocessing. Put the preprocessing "
+                "in a Pipeline and pass the Pipeline to cross-validation.",
+            )
+
+
 # Implemented checkers, keyed by rule code. Filled in as rules land (M2, M5).
 CHECKERS: dict[str, Checker] = {
     "FS001": check_fs001,
     "FS002": check_fs002,
+    "FS003": check_fs003,
 }

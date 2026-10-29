@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **FS003** is active: data preprocessed on all rows that enters `cross_val_score`-style
+  functions or `*SearchCV.fit` is reported on the CV call, naming the fit line. When the same
+  data is also split, the leak is reported once, as FS001.
 - **FS002** is active: a feature selector or target encoder that learned from the labels of
   all rows, whose output is split or cross-validated, is reported on the fit line. It takes
   precedence over FS001 and FS003 for the same fit.

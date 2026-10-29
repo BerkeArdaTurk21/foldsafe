@@ -11,7 +11,8 @@ HEADER = """\
 import pandas as pd
 from sklearn.feature_selection import SelectKBest
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import KFold, cross_val_score, train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import GridSearchCV, KFold, cross_val_score, train_test_split
 from sklearn.preprocessing import StandardScaler
 df = pd.read_csv("train.csv")
 X = df.drop(columns=["target"])
@@ -112,3 +113,38 @@ def test_fs002_selection_on_training_rows_is_fine():
 
 def test_fs002_selection_that_is_never_evaluated_is_not_reported():
     assert findings("X_best = SelectKBest(k=5).fit_transform(X, y)", "FS002") == []
+
+
+# -------------------------------------------------------------------- FS003
+
+
+def test_fs003_reports_each_cv_call_and_names_the_fit_line():
+    found = findings(
+        """
+        X_scaled = StandardScaler().fit_transform(X)
+        first = cross_val_score(LogisticRegression(), X_scaled, y)
+        search = GridSearchCV(LogisticRegression(), {"C": [1, 10]})
+        search.fit(X_scaled, y)
+        """,
+        "FS003",
+    )
+    assert lines(found) == [2, 4]
+    assert f"line {FIRST_BODY_LINE + 1}" in found[0].message
+
+
+def test_fs003_defers_to_fs001_when_the_same_data_is_also_split():
+    source = """
+        X_scaled = StandardScaler().fit_transform(X)
+        X_a, X_b = train_test_split(X_scaled)
+        scores = cross_val_score(LogisticRegression(), X_scaled, y)
+        """
+    assert lines(findings(source, "FS001")) == [1]
+    assert findings(source, "FS003") == []
+
+
+def test_fs003_pipeline_in_cross_validation_is_fine():
+    found = findings(
+        "scores = cross_val_score(make_pipeline(StandardScaler(), LogisticRegression()), X, y)",
+        "FS003",
+    )
+    assert found == []
