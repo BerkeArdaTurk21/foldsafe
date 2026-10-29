@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **FS001** is active: a preprocessor fitted on all rows whose output is split afterwards
+  (by `train_test_split` or a manual `cv.split()` loop) is reported on the fit line.
+  Checkers now receive the flow pass's events (`foldsafe.rules.checks`); the rule catalog
+  moved to `foldsafe.rules.info`.
 - Estimator recognition (`foldsafe.catalog`): preprocessors, target-aware selectors and
   encoders, imblearn samplers, pipelines (kind taken from their last step) and models.
   `fit`, `fit_transform` and `fit_resample` are recorded as fit events; a transformer fitted
