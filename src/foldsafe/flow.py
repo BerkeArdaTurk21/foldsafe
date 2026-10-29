@@ -12,7 +12,7 @@ import ast
 from dataclasses import dataclass, field
 
 from foldsafe.catalog import LEAKY_KINDS, estimator_kind
-from foldsafe.events import CVEvent, Event, FitEvent, SplitEvent
+from foldsafe.events import CVEvent, Event, FitEvent, SplitEvent, StatEvent
 from foldsafe.values import (
     DataTuple,
     DataValue,
@@ -30,6 +30,22 @@ from foldsafe.values import (
 )
 
 FIT_METHODS = {"fit", "fit_transform", "fit_resample"}
+
+# pandas/numpy methods that summarize the rows they are called on.
+STAT_METHODS = {
+    "mean",
+    "median",
+    "std",
+    "var",
+    "mode",
+    "quantile",
+    "min",
+    "max",
+    "sum",
+    "value_counts",
+}
+# groupby(...).transform("mean") and .agg("mean") summarize too.
+AGGREGATING_METHODS = {"transform", "agg", "aggregate"}
 
 # Calls that load a dataset. A file name containing "test" yields TEST rows.
 FILE_READERS = {
@@ -118,6 +134,7 @@ class FlowState:
 class FlowAnalyzer:
     def __init__(self, state: FlowState | None = None) -> None:
         self.state = state or FlowState()
+        self.storing = False  # the current statement assigns its result
 
     # ------------------------------------------------------------------ names
 
@@ -221,9 +238,25 @@ class FlowAnalyzer:
         if isinstance(receiver, EstimatorValue):
             return self.estimator_method(node, func, receiver)
         if isinstance(receiver, DataValue):
+            statistic = self.statistic_name(node, func.attr)
+            if statistic is not None:
+                self.record(StatEvent(node.lineno, statistic, receiver, self.storing))
             # A method on data (drop, fillna, median, to_numpy, ...) keeps its rows.
             return merge_data([receiver, *self.data_operands(self.argument_nodes(node))])
         self.evaluate_arguments(node)
+        return None
+
+    @staticmethod
+    def statistic_name(node: ast.Call, method: str) -> str | None:
+        if method in STAT_METHODS:
+            return method
+        first = node.args[0] if node.args else None
+        if (
+            method in AGGREGATING_METHODS
+            and isinstance(first, ast.Constant)
+            and first.value in STAT_METHODS
+        ):
+            return f"{method}:{first.value}"
         return None
 
     # ------------------------------------------------------------- estimators
@@ -400,6 +433,7 @@ class FlowAnalyzer:
             self.visit_statement(statement)
 
     def visit_statement(self, node: ast.stmt) -> None:
+        self.storing = isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             self.record_import(node)
         elif isinstance(node, ast.Assign):

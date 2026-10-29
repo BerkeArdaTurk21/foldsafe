@@ -39,4 +39,14 @@ class FitEvent:
     uses_y: bool
 
 
-Event = SplitEvent | CVEvent | FitEvent
+@dataclass(frozen=True)
+class StatEvent:
+    """A statistic is computed from data: df["Age"].median(), groupby(...).transform("mean")."""
+
+    line: int
+    method: str  # "median", "mean", ... or "transform:mean"
+    data: DataValue  # the rows the statistic was computed from
+    stored: bool  # inside an assignment, so the result is kept (not just printed)
+
+
+Event = SplitEvent | CVEvent | FitEvent | StatEvent

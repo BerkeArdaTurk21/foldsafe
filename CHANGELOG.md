@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **FS004** is active: fitting any estimator on test rows (or on train and test rows mixed),
+  and keeping a statistic (`median`, `mean`, `groupby(...).transform("mean")`, ...) computed
+  on train + test rows combined. Statistic events also record whether the result is kept,
+  so exploratory `print(...)` calls are not reported.
 - **FS003** is active: data preprocessed on all rows that enters `cross_val_score`-style
   functions or `*SearchCV.fit` is reported on the CV call, naming the fit line. When the same
   data is also split, the leak is reported once, as FS001.

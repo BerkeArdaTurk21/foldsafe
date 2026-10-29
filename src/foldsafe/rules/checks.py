@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 
-from foldsafe.events import CVEvent, SplitEvent
+from foldsafe.events import CVEvent, FitEvent, SplitEvent, StatEvent
 from foldsafe.findings import Finding
 from foldsafe.flow import FlowState
 from foldsafe.rules.info import RULES
-from foldsafe.values import Taint
+from foldsafe.values import Origin, Taint
 
 Checker = Callable[[FlowState, str], Iterable[Finding]]
 
@@ -97,9 +97,46 @@ def check_fs003(state: FlowState, path: str) -> Iterator[Finding]:
             )
 
 
+def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
+    """Test rows used for fitting, or a statistic of train + test rows that is kept."""
+    reported: set[int] = set()
+    for event in state.events:
+        if event.line in reported:
+            continue
+        if isinstance(event, FitEvent) and event.data is not None:
+            if event.data.origin is Origin.TEST:
+                reported.add(event.line)
+                yield finding(
+                    "FS004",
+                    path,
+                    event.line,
+                    "An estimator is fitted on test rows. Fit on the training rows only and "
+                    "use transform() (or predict()) on the test rows.",
+                )
+            elif event.data.origin is Origin.COMBINED:
+                reported.add(event.line)
+                yield finding(
+                    "FS004",
+                    path,
+                    event.line,
+                    "An estimator is fitted on train and test rows together. Fit on the "
+                    "training rows only.",
+                )
+        elif isinstance(event, StatEvent) and event.stored and event.data.origin is Origin.COMBINED:
+            reported.add(event.line)
+            yield finding(
+                "FS004",
+                path,
+                event.line,
+                f"A statistic ({event.method}) is computed on train and test rows combined "
+                "and kept. Compute it on the training rows and reuse it for the test rows.",
+            )
+
+
 # Implemented checkers, keyed by rule code. Filled in as rules land (M2, M5).
 CHECKERS: dict[str, Checker] = {
     "FS001": check_fs001,
     "FS002": check_fs002,
     "FS003": check_fs003,
+    "FS004": check_fs004,
 }

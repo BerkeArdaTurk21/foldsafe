@@ -202,3 +202,26 @@ def test_corpus_shuffle_flags_for_date_examples():
     assert cv_events(leaky)[0].shuffled is True
     _, clean = events_in("clean/fs008_chronological_split.py")
     assert splits(clean)[0].shuffled is False
+
+
+# ---------------------------------------------------------------- statistics
+
+
+def test_statistic_events_know_whether_the_result_is_kept():
+    from foldsafe.events import StatEvent
+
+    state = flow(
+        """
+        median_age = df["Age"].median()
+        print(df["Age"].median())
+        df["rate"] = df.groupby("Pclass")["target"].transform("mean")
+        df.groupby("Pclass")["target"].transform(lambda s: s)
+        """
+    )
+    stats = [event for event in state.events if isinstance(event, StatEvent)]
+    assert [(event.method, event.stored) for event in stats] == [
+        ("median", True),
+        ("median", False),
+        ("transform:mean", True),
+    ]
+    assert all(event.data.origin is Origin.FULL for event in stats)

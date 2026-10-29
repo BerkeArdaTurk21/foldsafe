@@ -148,3 +148,45 @@ def test_fs003_pipeline_in_cross_validation_is_fine():
         "FS003",
     )
     assert found == []
+
+
+# -------------------------------------------------------------------- FS004
+
+
+def test_fs004_fit_on_test_rows():
+    found = findings(
+        """
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+        model = LogisticRegression().fit(X_test, y_test)
+        """,
+        "FS004",
+    )
+    assert lines(found) == [2]
+    assert "test rows" in found[0].message
+
+
+def test_fs004_stored_statistic_of_combined_rows():
+    found = findings(
+        """
+        test = pd.read_csv("test.csv")
+        both = pd.concat([df, test])
+        fare_mean = both["Fare"].mean()
+        print(both["Fare"].mean())
+        both["group_rate"] = both.groupby("Ticket")["Fare"].transform("mean")
+        """,
+        "FS004",
+    )
+    assert lines(found) == [3, 5]
+    assert "(transform:mean)" in found[1].message
+
+
+def test_fs004_statistic_of_training_file_reused_for_test_file_is_fine():
+    found = findings(
+        """
+        test = pd.read_csv("test.csv")
+        age_median = df["Age"].median()
+        test["Age"] = test["Age"].fillna(age_median)
+        """,
+        "FS004",
+    )
+    assert found == []
