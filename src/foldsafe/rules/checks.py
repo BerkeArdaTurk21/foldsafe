@@ -18,8 +18,15 @@ from foldsafe.values import Origin, Taint
 Checker = Callable[[FlowState, str], Iterable[Finding]]
 
 
-def finding(code: str, path: str, line: int, message: str) -> Finding:
-    return Finding(code, path, line, message, RULES[code].severity)
+def finding(code: str, path: str, line: int, message: str, fix: str | None = None) -> Finding:
+    """A finding with the rule's severity and fix, unless a more specific fix is given."""
+    rule = RULES[code]
+    return Finding(code, path, line, message, rule.severity, fix or rule.fix)
+
+
+def short_name(qualified: str) -> str:
+    """sklearn.preprocessing.StandardScaler -> StandardScaler."""
+    return qualified.rsplit(".", 1)[-1]
 
 
 def split_taints(state: FlowState) -> set[Taint]:
@@ -49,9 +56,8 @@ def check_fs001(state: FlowState, path: str) -> Iterator[Finding]:
             "FS001",
             path,
             taint.line,
-            "Preprocessor is fitted on all rows before the train/test split, so the test rows "
-            "shape what it learns. Split first, then fit it on the training rows (or use a "
-            "Pipeline).",
+            "Preprocessor is fitted on all rows and its output is split afterwards, so the "
+            "test rows of the train/test split shaped what it learned.",
         )
 
 
@@ -65,8 +71,7 @@ def check_fs002(state: FlowState, path: str) -> Iterator[Finding]:
             path,
             taint.line,
             "Feature selection (or target encoding) learns from the labels of all rows, "
-            "including the rows used for evaluation. Put it inside a Pipeline so each fold "
-            "selects on its own training rows.",
+            "including the rows its output is later evaluated on.",
         )
 
 
@@ -92,9 +97,16 @@ def check_fs003(state: FlowState, path: str) -> Iterator[Finding]:
                 path,
                 event.line,
                 f"Data preprocessed on all rows (fitted on line {fit_lines}) is cross-validated, "
-                "so every validation fold was seen by the preprocessing. Put the preprocessing "
-                "in a Pipeline and pass the Pipeline to cross-validation.",
+                "so every validation fold was seen by the preprocessing.",
             )
+
+
+# FS004 for a statistic: a pandas fix fits better than the estimator-oriented default.
+STAT_FIX = (
+    "Compute the statistic on the training rows and reuse it for the test rows: median = "
+    'train["Age"].median(); test["Age"] = test["Age"].fillna(median). Or use SimpleImputer '
+    "in a Pipeline."
+)
 
 
 def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
@@ -110,8 +122,8 @@ def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
                     "FS004",
                     path,
                     event.line,
-                    "An estimator is fitted on test rows. Fit on the training rows only and "
-                    "use transform() (or predict()) on the test rows.",
+                    f"{short_name(event.cls)} is fitted on test rows, so the evaluation data "
+                    "shapes what it learns.",
                 )
             elif event.data.origin is Origin.COMBINED:
                 reported.add(event.line)
@@ -119,8 +131,8 @@ def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
                     "FS004",
                     path,
                     event.line,
-                    "An estimator is fitted on train and test rows together. Fit on the "
-                    "training rows only.",
+                    f"{short_name(event.cls)} is fitted on train and test rows together, so the "
+                    "evaluation data shapes what it learns.",
                 )
         elif isinstance(event, StatEvent) and event.stored and event.data.origin is Origin.COMBINED:
             reported.add(event.line)
@@ -129,7 +141,8 @@ def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
                 path,
                 event.line,
                 f"A statistic ({event.method}) is computed on train and test rows combined "
-                "and kept. Compute it on the training rows and reuse it for the test rows.",
+                "and kept, so the test rows shape the values the model sees.",
+                STAT_FIX,
             )
 
 

@@ -6,6 +6,7 @@ import textwrap
 
 from foldsafe.analyzer import analyze_source
 from foldsafe.findings import Finding, Severity
+from foldsafe.rules import RULES
 
 HEADER = """\
 import pandas as pd
@@ -162,7 +163,8 @@ def test_fs004_fit_on_test_rows():
         "FS004",
     )
     assert lines(found) == [2]
-    assert "test rows" in found[0].message
+    assert "LogisticRegression is fitted on test rows" in found[0].message
+    assert found[0].fix == RULES["FS004"].fix
 
 
 def test_fs004_stored_statistic_of_combined_rows():
@@ -178,6 +180,9 @@ def test_fs004_stored_statistic_of_combined_rows():
     )
     assert lines(found) == [3, 5]
     assert "(transform:mean)" in found[1].message
+    # A statistic gets a pandas fix, not the estimator-oriented default.
+    assert all(finding.fix != RULES["FS004"].fix for finding in found)
+    assert "fillna(median)" in found[0].fix
 
 
 def test_fs004_statistic_of_training_file_reused_for_test_file_is_fine():
@@ -190,3 +195,48 @@ def test_fs004_statistic_of_training_file_reused_for_test_file_is_fine():
         "FS004",
     )
     assert found == []
+
+
+# ----------------------------------------------------------- messages and fixes
+
+LEAKS_BY_RULE = {
+    "FS001": """
+        X_scaled = StandardScaler().fit_transform(X)
+        X_train, X_test = train_test_split(X_scaled)
+        """,
+    "FS002": """
+        X_selected = SelectKBest(k=5).fit_transform(X, y)
+        cross_val_score(LogisticRegression(), X_selected, y)
+        """,
+    "FS003": """
+        X_scaled = StandardScaler().fit_transform(X)
+        cross_val_score(LogisticRegression(), X_scaled, y)
+        """,
+    "FS004": """
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+        StandardScaler().fit(X_test)
+        """,
+}
+
+
+def test_every_rule_explains_why_and_how_to_fix():
+    for rule in RULES.values():
+        assert rule.why.endswith("."), rule.code
+        assert rule.fix.endswith("."), rule.code
+        # Every fix shows the correction as code, not only in words.
+        assert "(" in rule.fix, rule.code
+
+
+def test_estimator_fixes_point_to_a_pipeline():
+    for code in ("FS001", "FS002", "FS003", "FS004", "FS005", "FS006", "FS007"):
+        assert "Pipeline" in RULES[code].fix or "pipeline" in RULES[code].fix, code
+
+
+def test_findings_carry_a_reason_and_the_rule_fix():
+    for code, body in LEAKS_BY_RULE.items():
+        found = findings(body, code)
+        assert len(found) == 1, code
+        assert found[0].fix == RULES[code].fix
+        # The message describes this leak; the fix is not repeated in it.
+        assert found[0].message.endswith("."), code
+        assert "Pipeline" not in found[0].message, code

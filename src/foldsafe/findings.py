@@ -16,5 +16,6 @@ class Finding:
     rule: str
     path: str
     line: int
-    message: str
+    message: str  # what was seen here and why it leaks
     severity: Severity
+    fix: str = ""  # how to correct it, usually with a Pipeline

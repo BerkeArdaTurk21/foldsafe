@@ -2,7 +2,8 @@
 
 **Catch data leakage in ML code before your metrics lie to you.**
 
-> 🚧 Pre-alpha. The analyzer is being built in public; no rules are active yet.
+> 🚧 Pre-alpha. The analyzer is being built in public: FS001–FS004 are checked, the CLI does
+> not print findings yet.
 
 Data leakage happens when information from your validation or test data sneaks into training,
 so your cross-validation score looks better than the model really is. The dangerous cases are
@@ -30,6 +31,8 @@ foldsafe is two things:
 | FS006 | Oversampling (SMOTE) before the split or outside an imblearn `Pipeline` |
 | FS007 | `best_score_` reported as the final score (suggests nested CV) |
 | FS008 | Shuffled split / KFold on data with a date column |
+
+Each rule, why it leaks and how to fix it: [`docs/rules.md`](docs/rules.md).
 
 ## Install (development)
 

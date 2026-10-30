@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Every finding now has a reason and a fix: `Finding.message` says what was seen on that line
+  and why it leaks, and the new `Finding.fix` gives the correction, usually a `Pipeline`
+  pattern. Rules carry `why` and `fix` texts (`RuleInfo`); FS004 statistics get a pandas fix.
+- `docs/rules.md`: every rule with its severity, status, the line it is reported on, why it
+  leaks, a leaky example and the fixed code. A test keeps it in sync with the rule catalog.
 - **FS004** is active: fitting any estimator on test rows (or on train and test rows mixed),
   and keeping a statistic (`median`, `mean`, `groupby(...).transform("mean")`, ...) computed
   on train + test rows combined. Statistic events also record whether the result is kept,
