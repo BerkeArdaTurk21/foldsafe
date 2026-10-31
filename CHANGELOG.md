@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Function, method and nested function bodies are analyzed: a leak inside `main()` is now
+  found. Each body sees the module's imports and earlier variables, its parameters are
+  unknown, and its assignments stay local. `return` expressions are evaluated too.
+  `docs/rules.md` explains what the analyzer follows and what it does not.
+- Seven new corpus examples for hard cases: reassignment inside `main()`, selection inside
+  a loop, scaling behind a config flag, a test-row fit inside a helper, plus three near
+  misses (names reused after the split, a Pipeline built by a factory, a manual fold loop).
 - Every finding now has a reason and a fix: `Finding.message` says what was seen on that line
   and why it leaks, and the new `Finding.fix` gives the correction, usually a `Pipeline`
   pattern. Rules carry `why` and `fix` texts (`RuleInfo`); FS004 statistics get a pandas fix.

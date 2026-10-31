@@ -3,7 +3,8 @@
 The pass walks module-level statements top to bottom, including the bodies of
 if/for/while/with/try blocks, and keeps an abstract value for each variable.
 Along the way it records events (splits, cross-validation, fits) for the rule checkers.
-Function and class bodies are not analyzed. Code is parsed, never executed.
+Function and class bodies are analyzed on their own (see visit_scope); flows between
+functions are not followed. Code is parsed, never executed.
 """
 
 from __future__ import annotations
@@ -444,17 +445,17 @@ class FlowAnalyzer:
             self.bind(node.target, self.eval_expr(node.value))
         elif isinstance(node, ast.AugAssign):
             self.bind(node.target, merge_data(self.data_operands([node.target, node.value])))
-        elif isinstance(node, ast.Expr):
-            self.eval_expr(node.value)
+        elif isinstance(node, (ast.Expr, ast.Return)):
+            self.eval_expr(node.value)  # return cross_val_score(...) still records the event
         elif isinstance(node, (ast.If, ast.While)):
             self.eval_expr(node.test)
             self.visit_block(node.body)
             self.visit_block(node.orelse)
-        elif isinstance(node, ast.For):
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
             self.bind(node.target, self.eval_expr(node.iter))
             self.visit_block(node.body)
             self.visit_block(node.orelse)
-        elif isinstance(node, ast.With):
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
             self.visit_block(node.body)
         elif isinstance(node, ast.Try):
             self.visit_block(node.body)
@@ -462,7 +463,29 @@ class FlowAnalyzer:
                 self.visit_block(handler.body)
             self.visit_block(node.orelse)
             self.visit_block(node.finalbody)
-        # FunctionDef, ClassDef and the rest are out of scope for v0.1.
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self.visit_scope(node.body, self.parameter_names(node.args))
+        elif isinstance(node, ast.ClassDef):
+            self.visit_scope(node.body, set())
+
+    def visit_scope(self, body: list[ast.stmt], parameters: set[str]) -> None:
+        """Analyze a function or class body on its own, where it is defined.
+
+        It sees the module's imports and the variables known so far, minus names its
+        parameters shadow (their values are unknown). Its assignments stay local; its
+        events are kept. Flows between functions are not followed.
+        """
+        env = {name: value for name, value in self.state.env.items() if name not in parameters}
+        local = FlowState(dict(self.state.imports), env, self.state.events)
+        FlowAnalyzer(local).visit_block(body)
+
+    @staticmethod
+    def parameter_names(arguments: ast.arguments) -> set[str]:
+        names = {
+            arg.arg for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        }
+        names.update(arg.arg for arg in (arguments.vararg, arguments.kwarg) if arg is not None)
+        return names
 
     def bind(self, target: ast.expr, value: Value | None) -> None:
         if isinstance(target, (ast.Tuple, ast.List)):

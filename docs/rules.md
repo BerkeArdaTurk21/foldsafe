@@ -16,6 +16,19 @@ but depends on intent or data. Status says whether the analyzer checks the rule 
 
 Every example below is a shortened version of a script in [`examples/`](../examples/).
 
+### What the analyzer follows
+
+foldsafe reads code top to bottom and keeps track of where each variable's rows came from.
+
+- **Followed:** reassignment (`X = scaler.fit_transform(X)`), `if` / `for` / `while` /
+  `with` / `try` blocks, and the bodies of functions, methods and nested functions. A
+  function body sees the module's imports and the variables defined before it; its
+  parameters are treated as unknown, and its own assignments stay local.
+- **Not followed (v0.1):** data that moves between functions (a function returns scaled
+  data that is split somewhere else), code built dynamically (`exec`, `getattr`), and
+  helpers from your own modules. In these cases foldsafe stays silent rather than guess.
+- Both branches of an `if` are assumed to run, so a leak behind a flag is still reported.
+
 ## FS001 · Preprocessor fitted on the full dataset before the train/test split
 
 Severity: error · Status: active · Reported on: the `fit` / `fit_transform` call

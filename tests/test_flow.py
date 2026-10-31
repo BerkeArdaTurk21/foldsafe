@@ -188,4 +188,5 @@ def test_every_corpus_example_runs_through_the_flow_pass():
     examples = Path(__file__).resolve().parent.parent / "examples"
     for path in sorted(examples.glob("*/*.py")):
         state = run_flow(ast.parse(path.read_text(encoding="utf-8")))
-        assert state.env, f"no data tracked in {path.name}"
+        # Code inside main() leaves the module scope empty but still records events.
+        assert state.env or state.events, f"nothing tracked in {path.name}"
