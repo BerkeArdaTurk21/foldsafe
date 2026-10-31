@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- CI lint failed on README while local lint passed: the unpinned `ruff` dev dependency let CI
+  install a newer release that also formats Python code blocks in Markdown. `ruff` is now
+  pinned (`ruff==0.17.3`) so local and CI results match.
+
 ### Added
 - Function, method and nested function bodies are analyzed: a leak inside `main()` is now
   found. Each body sees the module's imports and earlier variables, its parameters are

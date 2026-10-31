@@ -13,8 +13,8 @@ training, so your score looks better than the model really is. The code runs, no
 errors, and the number is plausible:
 
 ```python
-X = StandardScaler().fit_transform(X)                 # learns mean/std from ALL rows
-X_train, X_test, y_train, y_test = train_test_split(X, y)   # test rows were already seen
+X = StandardScaler().fit_transform(X)  # learns mean/std from ALL rows
+X_train, X_test, y_train, y_test = train_test_split(X, y)  # test rows were already seen
 ```
 
 The dangerous leaks are the small ones. On Kaggle Titanic, one target-derived feature
