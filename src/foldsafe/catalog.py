@@ -52,6 +52,14 @@ for module, names in {
 }.items():
     ESTIMATOR_KINDS.update({qualified: "pipeline" for qualified in _qualify(module, names)})
 
+# Function forms of the scalers: scale(X) fits and transforms in one call.
+FUNCTIONAL_TRANSFORMERS = set(
+    _qualify(
+        "sklearn.preprocessing",
+        "scale minmax_scale maxabs_scale robust_scale quantile_transform power_transform",
+    )
+)
+
 # Packages whose capitalized, unlisted classes are treated as models.
 MODEL_PACKAGES = ("sklearn.", "xgboost.", "lightgbm.", "catboost.", "imblearn.")
 

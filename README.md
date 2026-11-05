@@ -56,11 +56,11 @@ Why each rule leaks, with a leaky and a fixed example: [`docs/rules.md`](docs/ru
   test rows, or train and test mixed. A transformer fitted on all rows leaves a mark on its
   output, and the mark is traced through reassignments, loops, `if` blocks and function
   bodies to the split or cross-validation call it reaches.
-- **Tested against labeled examples.** [`examples/`](examples/) holds 26 leaky scripts with
-  the expected finding marked on its line, and 26 clean scripts, many of them near misses
+- **Tested against labeled examples.** [`examples/`](examples/) holds 29 leaky scripts with
+  the expected finding marked on its line, and 28 clean scripts, many of them near misses
   (exploring the full data, refitting the final model after evaluation, a hand-written fold
   loop). Every active rule finds all of its leaky examples and flags no clean one.
-- **Tried on real code.** It parses scikit-learn's 671 source files in about two seconds
+- **Tried on real code.** It parses scikit-learn's 671 source files in a few seconds
   without a crash. Its findings there are real patterns in test code, and the one false
   alarm this trial found (fitting a calibrator on a held-out `X_cal`) is now fixed and in
   the corpus. That is one codebase, not a measured false-positive rate.
@@ -102,7 +102,7 @@ for finding in analyze_source(path.read_text(), str(path)):
 ```bash
 ruff check .
 ruff format --check .
-pytest
+pytest --cov=foldsafe --cov-branch
 ```
 
 Every rule is specified by labeled examples before it is implemented. To add one, see

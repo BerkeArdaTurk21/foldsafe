@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -38,3 +40,19 @@ def test_collect_files_skips_virtualenv_and_checkpoints(tmp_path: Path):
 def test_check_rejects_missing_path(tmp_path: Path):
     result = runner.invoke(app, ["check", str(tmp_path / "missing.py")])
     assert result.exit_code != 0
+
+
+def test_check_accepts_single_files_and_ignores_other_suffixes(tmp_path: Path):
+    script = tmp_path / "train.py"
+    script.write_text("x = 1\n")
+    notes = tmp_path / "notes.md"
+    notes.write_text("# not code\n")
+
+    assert collect_files([script, notes]) == [script]
+
+
+def test_module_entry_point_prints_version():
+    result = subprocess.run(
+        [sys.executable, "-m", "foldsafe", "--version"], capture_output=True, text=True, check=True
+    )
+    assert __version__ in result.stdout

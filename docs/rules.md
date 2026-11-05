@@ -25,9 +25,15 @@ foldsafe reads code top to bottom and keeps track of where each variable's rows 
   function body sees the module's imports and the variables defined before it; its
   parameters are treated as unknown, and its own assignments stay local.
 - **Not followed (v0.1):** data that moves between functions (a function returns scaled
-  data that is split somewhere else), code built dynamically (`exec`, `getattr`), and
-  helpers from your own modules. In these cases foldsafe stays silent rather than guess.
+  data that is split somewhere else), values stored on objects (`self.X = ...`), code built
+  dynamically (`exec`, `getattr`), and helpers from your own modules. In these cases
+  foldsafe stays silent rather than guess.
 - Both branches of an `if` are assumed to run, so a leak behind a flag is still reported.
+
+Wrappers and helpers from numpy and pandas keep the rows and marks of their input, so
+`pd.DataFrame(scaler.fit_transform(X), columns=X.columns)` and `np.log1p(X_scaled)` are
+followed. A file counts as test rows when `test` appears as a word in its path or variable
+(`test.csv`, `DATA_DIR / "test.csv"`, `TEST_PATH`), but not `latest_prices.csv`.
 
 Three judgment calls keep false alarms down:
 

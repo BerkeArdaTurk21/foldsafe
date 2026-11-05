@@ -10,9 +10,10 @@ functions are not followed. Code is parsed, never executed.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 
-from foldsafe.catalog import LEAKY_KINDS, estimator_kind
+from foldsafe.catalog import FUNCTIONAL_TRANSFORMERS, LEAKY_KINDS, estimator_kind
 from foldsafe.events import CVEvent, Event, FitEvent, SplitEvent, StatEvent
 from foldsafe.values import (
     DataTuple,
@@ -31,6 +32,12 @@ from foldsafe.values import (
 )
 
 FIT_METHODS = {"fit", "fit_transform", "fit_resample"}
+
+# Other numpy and pandas functions keep the rows of their arguments: np.log1p, pd.get_dummies.
+ARRAY_LIBRARIES = ("numpy.", "pandas.")
+
+# "test" as a word in a path or name: test.csv, X_test.csv, TEST_PATH, but not latest.csv.
+TEST_WORD = re.compile(r"(?<![a-z])test(ing)?(?![a-z])")
 
 # A held-out split part with one of these name parts is for tuning or calibration, not final
 # evaluation: fitting a calibrator on X_cal or refitting on X_train + X_val is legitimate.
@@ -210,11 +217,21 @@ class FlowAnalyzer:
         name = self.qualified_name(node.func)
         if name in FILE_READERS:
             return DataValue(Origin.TEST if self.names_test_file(node) else Origin.FULL)
-        if name in IN_MEMORY_SOURCES or (name and name.startswith(DATASET_PREFIXES)):
+        if name in IN_MEMORY_SOURCES:
+            # pd.DataFrame(scaled, columns=X.columns) wraps its first argument: same rows, same
+            # taints. The keywords add no rows, even when they read from another frame.
+            data = self.as_data(self.eval_expr(self.argument(node, 0, "data")))
+            self.evaluate_keywords(node)
+            return data or DataValue(Origin.FULL)
+        if name and name.startswith(DATASET_PREFIXES):
             self.evaluate_arguments(node)
             return DataValue(Origin.FULL)
         if name in ROW_COMBINERS:
             return merge_data(self.data_operands(node.args))
+        if name in FUNCTIONAL_TRANSFORMERS:
+            return self.functional_transform(node, name)
+        if name and name.startswith(ARRAY_LIBRARIES):
+            return self.array_function(node, name)
         if name == TRAIN_TEST_SPLIT:
             return self.train_test_split(node)
         if name in CV_FUNCTIONS:
@@ -236,6 +253,23 @@ class FlowAnalyzer:
             return Enumerated(item) if isinstance(item, FoldIndices) else None
         self.evaluate_arguments(node)  # print(cross_val_score(...)) still records the event
         return None
+
+    def array_function(self, node: ast.Call, name: str) -> DataValue | None:
+        """np.log1p(X), pd.get_dummies(X), np.mean(X): the result comes from the same rows."""
+        self.evaluate_keywords(node)
+        data = merge_data(self.data_operands(node.args))
+        statistic = name.rsplit(".", 1)[-1]
+        if data is not None and statistic in STAT_METHODS:
+            self.record(StatEvent(node.lineno, statistic, data, self.storing))
+        return data
+
+    def functional_transform(self, node: ast.Call, name: str) -> DataValue | None:
+        """sklearn.preprocessing.scale(X) is a fit_transform in one call."""
+        x = self.as_data(self.eval_expr(self.argument(node, 0, "X")))
+        self.evaluate_keywords(node)
+        self.record(FitEvent(node.lineno, name, "preprocess", "fit_transform", x, False))
+        estimator = self.fitted(EstimatorValue(name, "preprocess"), x, node.lineno)
+        return self.transformed(x, estimator)
 
     def method_call(self, node: ast.Call, func: ast.Attribute) -> Value | None:
         receiver = self.eval_expr(func.value)
@@ -451,12 +485,20 @@ class FlowAnalyzer:
 
     @staticmethod
     def names_test_file(node: ast.Call) -> bool:
-        first = node.args[0] if node.args else None
-        return (
-            isinstance(first, ast.Constant)
-            and isinstance(first.value, str)
-            and "test" in first.value.lower()
-        )
+        """True for test.csv, DATA_DIR / "test.csv" and TEST_PATH; False for latest_prices.csv."""
+        if not node.args:
+            return False
+        for part in ast.walk(node.args[0]):
+            text = None
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                text = part.value
+            elif isinstance(part, ast.Name):
+                text = part.id
+            elif isinstance(part, ast.Attribute):
+                text = part.attr
+            if text is not None and TEST_WORD.search(text.lower()):
+                return True
+        return False
 
     # ------------------------------------------------------------- statements
 

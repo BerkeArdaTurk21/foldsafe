@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Missed leak: `pd.DataFrame(...)` and `np.asarray(...)` dropped the origin and marks of their
+  input, and other numpy and pandas functions (`np.log1p`, `pd.get_dummies`) dropped the data
+  entirely. `pd.DataFrame(scaler.fit_transform(X), columns=X.columns)` before a split is now
+  reported, and `np.mean(both["Fare"])` counts as a statistic.
+- Missed leak: function forms of the scalers (`scale`, `minmax_scale`, `robust_scale`, ...).
+- False alarm: any path containing the letters "test" (`latest_prices.csv`) counted as test
+  rows. It now has to be a word. `DATA_DIR / "test.csv"` and `TEST_PATH` are recognized too.
 - False alarm: fitting on a held-out part named like a validation set (`X_val`, `X_cal`,
   `X_dev`), or refitting on train + validation, was reported as FS004. Found in
   scikit-learn's own calibration tests.
@@ -20,6 +27,7 @@ All notable changes to this project are documented here. The format follows
   pinned (`ruff==0.17.3`) so local and CI results match.
 
 ### Added
+- Coverage measurement with `pytest-cov`; CI fails below 95% (currently 99%).
 - Function, method and nested function bodies are analyzed: a leak inside `main()` is now
   found. Each body sees the module's imports and earlier variables, its parameters are
   unknown, and its assignments stay local. `return` expressions are evaluated too.

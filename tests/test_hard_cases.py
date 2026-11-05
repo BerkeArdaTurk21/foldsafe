@@ -229,3 +229,153 @@ def test_rows_selected_from_combined_data_are_not_called_mixed():
         fitted_on_columns = StandardScaler().fit(both[["a", "b"]])
         """
     assert rule_lines(body) == [("FS004", 3), ("FS004", 5)]
+
+
+# ---------------------------------------- found while reviewing coverage (day 11)
+
+
+def test_dataframe_wrapper_keeps_rows_and_taints():
+    body = """
+        S = pd.DataFrame(StandardScaler().fit_transform(X), columns=X.columns)
+        X_a, X_b = train_test_split(S)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_dataframe_columns_keyword_does_not_mix_rows():
+    body = """
+        X_train, X_test = train_test_split(X)
+        wrapped = pd.DataFrame(X_test, columns=X_train.columns)
+        total = wrapped.sum()
+        kept_on_test = wrapped["a"].mean()
+        """
+    assert rule_lines(body) == []
+
+
+def test_numpy_and_pandas_functions_keep_rows_and_taints():
+    body = """
+        import numpy as np
+        logged = np.log1p(StandardScaler().fit_transform(X))
+        dummies = pd.get_dummies(logged)
+        X_a, X_b = train_test_split(dummies)
+        """
+    assert rule_lines(body) == [("FS001", 2)]
+
+
+def test_numpy_statistic_of_combined_rows_is_reported_when_kept():
+    body = """
+        import numpy as np
+        test = pd.read_csv("test.csv")
+        both = pd.concat([X, test])
+        fare_mean = np.mean(both["Fare"])
+        print(np.median(both["Fare"]))
+        """
+    assert rule_lines(body) == [("FS004", 4)]
+
+
+def test_function_form_scalers_count_as_fits():
+    body = """
+        from sklearn.preprocessing import robust_scale, scale
+        X_a, X_test = train_test_split(scale(X))
+        wrong = robust_scale(X_test)
+        """
+    assert rule_lines(body) == [("FS001", 2), ("FS004", 3)]
+
+
+def test_test_file_names_are_matched_as_words():
+    body = """
+        from pathlib import Path
+        DATA = Path("data")
+        TEST_PATH = "x.csv"
+        by_path = pd.read_csv(DATA / "test.csv")
+        by_name = pd.read_csv(TEST_PATH)
+        by_fstring = pd.read_csv(f"{DATA}/Test_Set.csv")
+        by_attribute = pd.read_csv(DATA.test_file)
+        not_test = pd.read_csv("latest_prices.csv")
+        also_not = pd.read_csv("data/contest.csv")
+        for frame in (by_path, by_name, by_fstring, by_attribute):
+            pass
+        a = StandardScaler().fit(by_path)
+        b = StandardScaler().fit(by_name)
+        c = StandardScaler().fit(by_fstring)
+        d = StandardScaler().fit(by_attribute)
+        e = StandardScaler().fit(not_test)
+        f = StandardScaler().fit(also_not)
+        """
+    assert rule_lines(body) == [("FS004", line) for line in (12, 13, 14, 15)]
+
+
+# ---------------------------------------------------- remaining uncovered paths
+
+
+def test_annotated_and_augmented_assignments_are_followed():
+    body = """
+        S: pd.DataFrame = StandardScaler().fit_transform(X)
+        Z = df["a"]
+        Z += S
+        X_a, X_b = train_test_split(Z)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_unary_minus_keeps_the_taint():
+    body = """
+        S = -StandardScaler().fit_transform(X)
+        X_a, X_b = train_test_split(S)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_fit_with_extra_arguments_and_nested_calls():
+    body = """
+        S = StandardScaler().fit_transform(X)
+        LogisticRegression().fit(X, y, sample_weight=cross_val_score(LogisticRegression(), S, y))
+        """
+    assert rule_lines(body) == [("FS003", 2)]
+
+
+def test_statsmodels_style_fit_without_data_arguments_is_ignored():
+    body = """
+        import statsmodels.api as sm
+        results = sm.OLS(y, X).fit()
+        print(results.summary())
+        """
+    assert rule_lines(body) == []
+
+
+def test_transform_of_untracked_data_is_untracked():
+    body = """
+        scaler = StandardScaler().fit(X)
+        out = scaler.transform(unknown_rows)
+        X_a, X_b = train_test_split(out)
+        """
+    assert rule_lines(body) == []
+
+
+def test_starred_targets_share_the_value():
+    body = """
+        S = StandardScaler().fit_transform(X)
+        first, *rest = S
+        X_a, X_b = train_test_split(first)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_values_stored_on_objects_are_not_followed():
+    body = """
+        class Holder:
+            pass
+
+        holder = Holder()
+        holder.X = StandardScaler().fit_transform(X)
+        X_a, X_b = train_test_split(holder.X)
+        """
+    assert rule_lines(body) == []
+
+
+def test_one_finding_for_two_test_fits_on_one_line():
+    body = """
+        X_a, X_test = train_test_split(X)
+        a = StandardScaler().fit(X_test); b = StandardScaler().fit(X_test)
+        """
+    assert rule_lines(body) == [("FS004", 2)]
