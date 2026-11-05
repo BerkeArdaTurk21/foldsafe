@@ -136,3 +136,96 @@ def test_methods_nested_and_async_functions_are_analyzed():
             parts = train_test_split(Z)
         """
     assert rule_lines(body) == [("FS001", 3), ("FS003", 8), ("FS001", 11)]
+
+
+# ------------------------------------------- found by trying real code (day 10)
+
+
+def test_unlisted_classes_count_as_transformers():
+    body = """
+        from my_project.features import GroupEncoder
+        X_encoded = GroupEncoder().fit_transform(X, y)
+        X_a, X_b = train_test_split(X_encoded)
+
+        class Experiment:
+            def run(self):
+                features = self.scaler.fit_transform(X)
+                return cross_val_score(LogisticRegression(), features, y)
+        """
+    assert rule_lines(body) == [("FS002", 2), ("FS003", 8)]
+
+
+def test_unlisted_class_fitted_then_transforming_keeps_the_fit_line():
+    body = """
+        from my_project.features import GroupEncoder
+        encoder = GroupEncoder()
+        encoder.fit(X)
+        X_encoded = encoder.transform(X)
+        X_a, X_b = train_test_split(X_encoded)
+        """
+    assert rule_lines(body) == [("FS001", 3)]
+
+
+def test_unlisted_model_leaves_no_trace():
+    body = """
+        from my_project.models import build_model
+        model = build_model()
+        model.fit(X, y)
+        predictions = model.predict(X)
+        X_a, X_b = train_test_split(X)
+        """
+    assert rule_lines(body) == []
+
+
+def test_fit_on_test_rows_names_an_unlisted_class():
+    source = HEADER + textwrap.dedent(
+        """
+        from my_project.features import GroupEncoder
+        X_train, X_test = train_test_split(X)
+        encoder = GroupEncoder().fit(X_test)
+        """
+    )
+    (finding,) = analyze_source(source, "script.py")
+    assert finding.rule == "FS004"
+    assert "GroupEncoder" in finding.message
+
+
+def test_validation_names_are_not_test_rows():
+    body = """
+        X_train, X_val, y_train, y_val = train_test_split(X, y)
+        calibrator = LogisticRegression().fit(X_val, y_val)
+        X_tr, X_dev = train_test_split(X)
+        scaler = StandardScaler().fit(X_dev)
+        X_a, X_calib_set = train_test_split(X)
+        other = StandardScaler().fit(X_calib_set)
+        """
+    assert rule_lines(body) == []
+
+
+def test_refit_on_train_plus_validation_is_fine_but_test_is_not():
+    body = """
+        X_train, X_val, y_train, y_val = train_test_split(X, y)
+        ok = LogisticRegression().fit(pd.concat([X_train, X_val]), pd.concat([y_train, y_val]))
+        X_a, X_test = train_test_split(X)
+        bad = LogisticRegression().fit(pd.concat([X_a, X_test]), y)
+        """
+    assert rule_lines(body) == [("FS004", 4)]
+
+
+def test_names_that_only_contain_val_are_not_validation():
+    body = """
+        X_a, interval = train_test_split(X)
+        scaler = StandardScaler().fit(interval)
+        """
+    assert rule_lines(body) == [("FS004", 2)]
+
+
+def test_rows_selected_from_combined_data_are_not_called_mixed():
+    body = """
+        test = pd.read_csv("test.csv")
+        both = pd.concat([X, test])
+        fitted_on_mixed = StandardScaler().fit(both)
+        fitted_on_slice = StandardScaler().fit(both.iloc[: len(X)])
+        fitted_on_columns = StandardScaler().fit(both[["a", "b"]])
+        """
+    assert rule_lines(body) == [("FS004", 3), ("FS004", 5)]

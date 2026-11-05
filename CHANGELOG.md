@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- False alarm: fitting on a held-out part named like a validation set (`X_val`, `X_cal`,
+  `X_dev`), or refitting on train + validation, was reported as FS004. Found in
+  scikit-learn's own calibration tests.
+- False alarm: rows selected from combined train + test data (`both.iloc[:n]`) counted as
+  mixed, so fitting on the train slice was reported as FS004.
+- Missed leak: custom and third-party classes outside the catalog were ignored. Anything
+  fitted on tracked data now counts as a transformer, so `MyEncoder().fit_transform(X, y)`
+  before a split or CV call is reported.
 - CI lint failed on README while local lint passed: the unpinned `ruff` dev dependency let CI
   install a newer release that also formats Python code blocks in Markdown. `ruff` is now
   pinned (`ruff==0.17.3`) so local and CI results match.

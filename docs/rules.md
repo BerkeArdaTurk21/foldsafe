@@ -29,6 +29,19 @@ foldsafe reads code top to bottom and keeps track of where each variable's rows 
   helpers from your own modules. In these cases foldsafe stays silent rather than guess.
 - Both branches of an `if` are assumed to run, so a leak behind a flag is still reported.
 
+Three judgment calls keep false alarms down:
+
+- **Unlisted classes count as transformers.** A custom or third-party class fitted on data
+  (`MyEncoder().fit_transform(X, y)`) is treated like a scikit-learn one, and passing `y`
+  counts as learning from the labels. A model fitted the same way leaves no trace, because
+  only `transform` output carries the mark.
+- **Names decide what a held-out part is for.** In `X_train, X_cal = train_test_split(X)`, a
+  held-out part whose name contains `val`, `valid`, `validation`, `cal`, `calib`,
+  `calibration` or `dev` as a word is a validation set: fitting a calibrator on it, or
+  refitting on train + validation, is not reported. Any other name counts as test rows.
+- **Selecting rows ends "mixed".** `combined.iloc[:n]` may be just the train rows, so fitting
+  on it is not reported. Leaks in `combined` itself are reported where they happen.
+
 ## FS001 · Preprocessor fitted on the full dataset before the train/test split
 
 Severity: error · Status: active · Reported on: the `fit` / `fit_transform` call

@@ -11,6 +11,7 @@ class Origin(str, Enum):
 
     FULL = "full"  # all labeled rows, before any split
     TRAIN = "train"  # training side of a split
+    VALIDATION = "validation"  # held-out rows named X_val, X_cal, X_dev: not the final test set
     TEST = "test"  # held-out side of a split, or a separate test file
     COMBINED = "combined"  # train and test rows mixed together
 
@@ -96,6 +97,8 @@ def merge_origins(first: Origin, second: Origin) -> Origin:
         return first
     if Origin.COMBINED in (first, second) or Origin.TEST in (first, second):
         return Origin.COMBINED
+    if Origin.FULL not in (first, second):
+        return Origin.TRAIN  # refitting on train + validation stays on the training side
     # FULL with TRAIN: the result still contains every labeled row.
     return Origin.FULL
 

@@ -115,7 +115,8 @@ def test_concat_of_train_and_test_files_is_combined():
         """
     )
     assert state.env["combined"].origin is Origin.COMBINED
-    assert state.env["head"].origin is Origin.COMBINED
+    # Selecting rows from a mixed frame: it may be only the train rows, so it is not "mixed".
+    assert state.env["head"].origin is Origin.FULL
 
 
 def test_reassigning_to_untracked_value_forgets_the_variable():

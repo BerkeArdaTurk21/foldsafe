@@ -32,6 +32,10 @@ from foldsafe.values import (
 
 FIT_METHODS = {"fit", "fit_transform", "fit_resample"}
 
+# A held-out split part with one of these name parts is for tuning or calibration, not final
+# evaluation: fitting a calibrator on X_cal or refitting on X_train + X_val is legitimate.
+VALIDATION_NAME_PARTS = {"val", "valid", "validation", "cal", "calib", "calibration", "dev"}
+
 # pandas/numpy methods that summarize the rows they are called on.
 STAT_METHODS = {
     "mean",
@@ -192,7 +196,15 @@ class FlowAnalyzer:
         if base is not None and isinstance(index, IndexValue):
             # X.iloc[train_idx] holds the training rows of X.
             return DataValue(index.side, base.taints)
+        if base is not None and base.origin is Origin.COMBINED and self.selects_rows(node):
+            # combined.iloc[:n] may be only the train rows: no longer known to be mixed.
+            return DataValue(Origin.FULL, base.taints)
         return base  # df["col"], df.iloc[:10] keep the rows of df
+
+    @staticmethod
+    def selects_rows(node: ast.Subscript) -> bool:
+        by_position = isinstance(node.value, ast.Attribute) and node.value.attr in ("iloc", "loc")
+        return by_position or isinstance(node.slice, ast.Slice)
 
     def eval_call(self, node: ast.Call) -> Value | None:
         name = self.qualified_name(node.func)
@@ -236,7 +248,7 @@ class FlowAnalyzer:
                 node, f"{receiver.cls}.fit", self.argument(node, 0, "X"), receiver.shuffled
             )
             return None
-        if isinstance(receiver, EstimatorValue):
+        if isinstance(receiver, EstimatorValue) or (receiver is None and func.attr in FIT_METHODS):
             return self.estimator_method(node, func, receiver)
         if isinstance(receiver, DataValue):
             statistic = self.statistic_name(node, func.attr)
@@ -289,7 +301,7 @@ class FlowAnalyzer:
         return "select" if "select" in kinds else "preprocess"
 
     def estimator_method(
-        self, node: ast.Call, func: ast.Attribute, estimator: EstimatorValue
+        self, node: ast.Call, func: ast.Attribute, estimator: EstimatorValue | None
     ) -> Value | None:
         method = func.attr
         x_node = self.argument(node, 0, "X")
@@ -299,6 +311,10 @@ class FlowAnalyzer:
         for other in self.argument_nodes(node):
             if other is not x_node and other is not y_node:
                 self.eval_expr(other)
+        if estimator is None:
+            if x is None:
+                return None  # .fit() on something unknown, with nothing we track
+            estimator = self.unlisted_estimator(func, method, y_node is not None)
         if method in FIT_METHODS:
             uses_y = y_node is not None
             event = FitEvent(node.lineno, estimator.cls, estimator.kind, method, x, uses_y)
@@ -313,6 +329,25 @@ class FlowAnalyzer:
         if method == "fit_resample":
             return DataTuple((self.transformed(x, estimator), self.transformed(y, estimator)))
         return None  # predict, score, ... produce no tracked rows
+
+    @classmethod
+    def unlisted_estimator(cls, func: ast.Attribute, method: str, uses_y: bool) -> EstimatorValue:
+        """A custom or third-party class that is not in the catalog but is fitted on data.
+
+        It is treated as a transformer: a plain model leaves no trace, because the taint
+        only reaches data through transform() or fit_transform().
+        """
+        kind = "resample" if method == "fit_resample" else "select" if uses_y else "preprocess"
+        return EstimatorValue(cls.receiver_label(func.value), kind)
+
+    @classmethod
+    def receiver_label(cls, node: ast.expr) -> str:
+        """Readable name for messages: MyEncoder().fit -> MyEncoder, self.scaler.fit -> scaler."""
+        if isinstance(node, ast.Call):
+            return cls.receiver_label(node.func)
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return node.id if isinstance(node, ast.Name) else "estimator"
 
     @staticmethod
     def fitted(estimator: EstimatorValue, data: DataValue | None, line: int) -> EstimatorValue:
@@ -507,10 +542,19 @@ class FlowAnalyzer:
                     current.origin, current.taints | value.taints
                 )
 
+    @staticmethod
+    def named_validation(target: ast.expr, part: DataValue | None) -> DataValue | None:
+        """`X_train, X_cal = train_test_split(X)`: the held-out part is a validation set by name."""
+        if part is None or part.origin is not Origin.TEST or not isinstance(target, ast.Name):
+            return part
+        if VALIDATION_NAME_PARTS.intersection(target.id.lower().split("_")):
+            return DataValue(Origin.VALIDATION, part.taints)
+        return part
+
     def bind_sequence(self, targets: list[ast.expr], value: Value | None) -> None:
         if isinstance(value, DataTuple) and len(targets) == len(value.parts):
             for target, part in zip(targets, value.parts, strict=True):
-                self.bind(target, part)
+                self.bind(target, self.named_validation(target, part))
         elif isinstance(value, FoldIndices) and len(targets) == 2:
             self.bind(targets[0], IndexValue(Origin.TRAIN))
             self.bind(targets[1], IndexValue(Origin.TEST))
