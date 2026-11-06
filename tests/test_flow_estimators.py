@@ -223,9 +223,7 @@ def taints_reaching_splits_or_cv(path: Path) -> set[Taint]:
         if isinstance(event, SplitEvent):
             for value in event.inputs:
                 reached |= value.taints
-        elif isinstance(event, CVEvent) and event.data is not None:
-            reached |= event.data.taints
-        elif isinstance(event, HeldOutTransformEvent):
+        elif isinstance(event, (CVEvent, HeldOutTransformEvent)) and event.data is not None:
             reached |= event.data.taints
     return reached
 
