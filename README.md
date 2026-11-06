@@ -2,9 +2,9 @@
 
 **Catch data leakage in ML code before your metrics lie to you.**
 
-> 🚧 **Pre-alpha, built in public.** The analyzer checks four rules today (FS001–FS004).
-> The `foldsafe check` command does not print findings yet (that lands in November),
-> and the package is not on PyPI yet. Use the Python API below to try it.
+> 🚧 **Pre-alpha, built in public.** `foldsafe check` works on scripts and notebooks and
+> checks four rules today (FS001–FS004). The package is not on PyPI yet: install it from
+> this repository.
 
 ## The problem
 
@@ -23,15 +23,19 @@ computed outside the CV loop scored **0.844**; the same feature computed correct
 
 ## What foldsafe tells you
 
-```text
+```console
+$ foldsafe check train.py
 train.py:9: FS001 [error]
-  why: Preprocessor is fitted on all rows and its output is split afterwards, so the test
-       rows of the train/test split shaped what it learned.
+  why: Preprocessor is fitted on all rows, including the rows held out for evaluation, so
+       the test rows of the train/test split shaped what it learned.
   fix: Split first and fit on the training rows only, or put the step in a Pipeline:
        make_pipeline(StandardScaler(), model).fit(X_train, y_train).
+
+Found 1 possible leak in 1 of 1 file (1 error, 0 warnings). Rules checked: FS001, FS002, FS003, FS004.
 ```
 
-Every finding has a place (file and line), a reason, and a fix. One leak gives one finding.
+Every finding has a place, a reason and a fix, and one leak gives one finding. In a
+notebook the place is a cell and a line: `churn.ipynb:cell 4:2`.
 
 ## Rules
 
@@ -75,24 +79,26 @@ git clone https://github.com/BerkeArdaTurk21/foldsafe
 cd foldsafe
 python -m venv .venv
 .venv/Scripts/activate   # Windows; on macOS/Linux: source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
+
+foldsafe check path/to/project
+foldsafe check notebook.ipynb --format json
 ```
 
-```python
-from pathlib import Path
-from foldsafe.analyzer import analyze_source
+| Exit code | Meaning |
+|---|---|
+| 0 | no leak found |
+| 1 | leak found |
+| 2 | no leak found, but a file could not be analyzed |
 
-path = Path("train.py")
-for finding in analyze_source(path.read_text(), str(path)):
-    print(f"{finding.path}:{finding.line}: {finding.rule}  {finding.message}")
-    print(f"  fix: {finding.fix}")
-```
+Exit code 1 lets CI stop a build. `--format json` is for tools and coding agents. Notebook
+cells are read in file order, IPython lines (`%magic`, `!shell`) are ignored, and a cell
+that is not valid Python is skipped and named in the output.
 
 ## Roadmap
 
 | When | What |
 |---|---|
-| Nov 2026 | `foldsafe check` prints findings (text and JSON) and exits non-zero on a leak; Jupyter notebook support |
 | Nov 2026 | Agent skill for Claude Code, Codex and Cursor: the agent runs foldsafe, explains and fixes each finding |
 | Dec 2026 | FS005–FS008 and a precision/recall benchmark on the example corpus |
 | Dec 2026 | `pip install foldsafe` (0.1.0), SARIF output and a GitHub Action |
@@ -100,6 +106,7 @@ for finding in analyze_source(path.read_text(), str(path)):
 ## Development
 
 ```bash
+pip install -e ".[dev]"
 ruff check .
 ruff format --check .
 pytest --cov=foldsafe --cov-branch

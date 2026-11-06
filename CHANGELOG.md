@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A project located inside a folder named `venv` or similar was skipped entirely; only folders
+  inside the given path count now.
 - Missed leak: a fit on all rows that transforms held-out rows was not reported unless its
   output was split, so `split; scaler.fit(X); scaler.transform(X_test)` passed. It is now
   FS001 (FS002 if it learned from `y`). A separate test file stays fine: it has its own
@@ -38,6 +40,11 @@ All notable changes to this project are documented here. The format follows
   pinned (`ruff==0.17.3`) so local and CI results match.
 
 ### Added
+- `foldsafe check` now reports findings, as text or as JSON (`--format json`), and exits 0 when
+  no leak is found, 1 when one is, and 2 when a file could not be analyzed.
+- Jupyter notebook support: code cells are joined in file order, findings point at a cell and
+  a line (`eda.ipynb:cell 4:2`), IPython lines are ignored, and a cell that is not valid
+  Python is skipped and named in the output. No new dependencies.
 - Coverage measurement with `pytest-cov`; CI fails below 95% (currently 99%).
 - Function, method and nested function bodies are analyzed: a leak inside `main()` is now
   found. Each body sees the module's imports and earlier variables, its parameters are

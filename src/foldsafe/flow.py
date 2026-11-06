@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from foldsafe.catalog import FUNCTIONAL_TRANSFORMERS, LEAKY_KINDS, estimator_kind
@@ -155,6 +156,7 @@ class FlowState:
     imports: dict[str, str] = field(default_factory=dict)  # local name -> qualified name
     env: dict[str, TrackedValue] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
+    describe_line: Callable[[int], str] = lambda line: f"line {line}"  # how messages name a line
 
 
 class FlowAnalyzer:

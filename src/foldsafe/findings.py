@@ -19,3 +19,4 @@ class Finding:
     message: str  # what was seen here and why it leaks
     severity: Severity
     fix: str = ""  # how to correct it, usually with a Pipeline
+    cell: int | None = None  # notebook cell number, from 1; line then counts within the cell

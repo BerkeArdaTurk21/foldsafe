@@ -97,12 +97,14 @@ def check_fs003(state: FlowState, path: str) -> Iterator[Finding]:
             if taint.kind == "preprocess" and taint not in already_split
         }
         if leaked:
-            fit_lines = ", ".join(str(line) for line in sorted(taint.line for taint in leaked))
+            fit_lines = ", ".join(
+                state.describe_line(line) for line in sorted(t.line for t in leaked)
+            )
             yield finding(
                 "FS003",
                 path,
                 event.line,
-                f"Data preprocessed on all rows (fitted on line {fit_lines}) is cross-validated, "
+                f"Data preprocessed on all rows (fitted on {fit_lines}) is cross-validated, "
                 "so every validation fold was seen by the preprocessing.",
             )
 

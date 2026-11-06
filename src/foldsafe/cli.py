@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from foldsafe import __version__
+from foldsafe.analyzer import analyze_file
+from foldsafe.report import exit_code, render_json, render_text
 
 SUPPORTED_SUFFIXES = {".py", ".ipynb"}
 SKIPPED_DIRS = {".git", ".venv", "venv", "__pycache__", ".ipynb_checkpoints", "node_modules"}
@@ -17,6 +20,11 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Catch data leakage in ML code before your metrics lie to you.",
 )
+
+
+class OutputFormat(str, Enum):
+    text = "text"
+    json = "json"
 
 
 def _version_callback(value: bool) -> None:
@@ -44,7 +52,8 @@ def collect_files(paths: list[Path]) -> list[Path]:
                 found.add(path)
             continue
         for candidate in path.rglob("*"):
-            if any(part in SKIPPED_DIRS for part in candidate.parts):
+            # Only folders inside the given path count: a project may itself live under venv/.
+            if SKIPPED_DIRS.intersection(candidate.relative_to(path).parts):
                 continue
             if candidate.is_file() and candidate.suffix in SUPPORTED_SUFFIXES:
                 found.add(candidate)
@@ -57,8 +66,16 @@ def check(
         list[Path],
         typer.Argument(exists=True, help="Files or directories to analyze."),
     ],
+    output_format: Annotated[
+        OutputFormat,
+        typer.Option("--format", help="Output format: text for people, json for tools."),
+    ] = OutputFormat.text,
 ) -> None:
-    """Analyze files for data leakage. Exits with code 1 when leakage is found."""
-    files = collect_files(paths)
-    # Rules arrive in M2; for now this only reports what would be analyzed.
-    typer.echo(f"foldsafe {__version__}: {len(files)} file(s) found, 0 rules active yet.")
+    """Analyze files for data leakage.
+
+    Exit codes: 0 no leak found, 1 leak found, 2 a file could not be analyzed.
+    """
+    results = [analyze_file(path) for path in collect_files(paths)]
+    render = render_json if output_format is OutputFormat.json else render_text
+    typer.echo(render(results))
+    raise typer.Exit(exit_code(results))

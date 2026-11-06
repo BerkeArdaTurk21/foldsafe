@@ -10,6 +10,8 @@ The test suite (`tests/test_corpus.py`) runs the analyzer over all of them.
   model on all labeled rows after evaluation, fitting a calibrator on `X_cal`). These guard
   against false positives.
 
+- `notebooks/` shows the same on a notebook; findings there point at a cell and a line.
+
 The files are never executed. The data files they read do not exist.
 
 ## Labeling
