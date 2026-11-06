@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 
-from foldsafe.events import CVEvent, FitEvent, SplitEvent, StatEvent
+from foldsafe.events import CVEvent, FitEvent, HeldOutTransformEvent, SplitEvent, StatEvent
 from foldsafe.findings import Finding
 from foldsafe.flow import FlowState
 from foldsafe.rules.info import RULES
@@ -30,12 +30,18 @@ def short_name(qualified: str) -> str:
 
 
 def split_taints(state: FlowState) -> set[Taint]:
-    """Taints carried by data at the moment it is split into train and test rows."""
+    """Taints of fits that saw rows held out by a split.
+
+    Either the fit's output is split afterwards, or a fit on all rows transforms
+    rows a split held out, as in scaler.fit(X); scaler.transform(X_test).
+    """
     taints: set[Taint] = set()
     for event in state.events:
         if isinstance(event, SplitEvent):
             for value in event.inputs:
                 taints |= value.taints
+        elif isinstance(event, HeldOutTransformEvent):
+            taints |= event.data.taints
     return taints
 
 
@@ -56,8 +62,8 @@ def check_fs001(state: FlowState, path: str) -> Iterator[Finding]:
             "FS001",
             path,
             taint.line,
-            "Preprocessor is fitted on all rows and its output is split afterwards, so the "
-            "test rows of the train/test split shaped what it learned.",
+            "Preprocessor is fitted on all rows, including the rows held out for "
+            "evaluation, so the test rows of the train/test split shaped what it learned.",
         )
 
 
@@ -116,7 +122,7 @@ def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
         if event.line in reported:
             continue
         if isinstance(event, FitEvent) and event.data is not None:
-            if event.data.origin is Origin.TEST:
+            if event.data.origin in (Origin.TEST, Origin.TEST_FILE):
                 reported.add(event.line)
                 yield finding(
                     "FS004",

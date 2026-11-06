@@ -56,8 +56,8 @@ Why each rule leaks, with a leaky and a fixed example: [`docs/rules.md`](docs/ru
   test rows, or train and test mixed. A transformer fitted on all rows leaves a mark on its
   output, and the mark is traced through reassignments, loops, `if` blocks and function
   bodies to the split or cross-validation call it reaches.
-- **Tested against labeled examples.** [`examples/`](examples/) holds 29 leaky scripts with
-  the expected finding marked on its line, and 28 clean scripts, many of them near misses
+- **Tested against labeled examples.** [`examples/`](examples/) holds 31 leaky scripts with
+  the expected finding marked on its line, and 31 clean scripts, many of them near misses
   (exploring the full data, refitting the final model after evaluation, a hand-written fold
   loop). Every active rule finds all of its leaky examples and flags no clean one.
 - **Tried on real code.** It parses scikit-learn's 671 source files in a few seconds

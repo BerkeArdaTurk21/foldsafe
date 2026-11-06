@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import ast
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from foldsafe.catalog import FUNCTIONAL_TRANSFORMERS, LEAKY_KINDS, estimator_kind
-from foldsafe.events import CVEvent, Event, FitEvent, SplitEvent, StatEvent
+from foldsafe.events import (
+    CVEvent,
+    Event,
+    FitEvent,
+    HeldOutTransformEvent,
+    SplitEvent,
+    StatEvent,
+)
 from foldsafe.values import (
     DataTuple,
     DataValue,
@@ -59,7 +66,7 @@ STAT_METHODS = {
 # groupby(...).transform("mean") and .agg("mean") summarize too.
 AGGREGATING_METHODS = {"transform", "agg", "aggregate"}
 
-# Calls that load a dataset. A file name containing "test" yields TEST rows.
+# Calls that load a dataset. A file name containing "test" yields TEST_FILE rows.
 FILE_READERS = {
     "pandas.read_csv",
     "pandas.read_excel",
@@ -68,6 +75,13 @@ FILE_READERS = {
     "pandas.read_parquet",
     "pandas.read_pickle",
     "pandas.read_table",
+    "pandas.read_fwf",
+    "pandas.read_hdf",
+    "pandas.read_orc",
+    "pandas.read_sql",
+    "pandas.read_sql_query",
+    "pandas.read_sql_table",
+    "pandas.read_stata",
     "numpy.genfromtxt",
     "numpy.load",
     "numpy.loadtxt",
@@ -194,6 +208,11 @@ class FlowAnalyzer:
             return self.as_data(self.eval_expr(node.operand))
         if isinstance(node, (ast.List, ast.Tuple)):
             return merge_data(self.data_operands(node.elts))
+        if isinstance(node, ast.IfExp):
+            self.eval_expr(node.test)
+            return merge_data(self.data_operands([node.body, node.orelse]))
+        if isinstance(node, ast.Dict):
+            return merge_data(self.data_operands(node.values))
         self.evaluate_children(node)
         return None
 
@@ -216,7 +235,7 @@ class FlowAnalyzer:
     def eval_call(self, node: ast.Call) -> Value | None:
         name = self.qualified_name(node.func)
         if name in FILE_READERS:
-            return DataValue(Origin.TEST if self.names_test_file(node) else Origin.FULL)
+            return DataValue(Origin.TEST_FILE if self.names_test_file(node) else Origin.FULL)
         if name in IN_MEMORY_SOURCES:
             # pd.DataFrame(scaled, columns=X.columns) wraps its first argument: same rows, same
             # taints. The keywords add no rows, even when they read from another frame.
@@ -261,6 +280,7 @@ class FlowAnalyzer:
         statistic = name.rsplit(".", 1)[-1]
         if data is not None and statistic in STAT_METHODS:
             self.record(StatEvent(node.lineno, statistic, data, self.storing))
+            return replace(data, summary=True)
         return data
 
     def functional_transform(self, node: ast.Call, name: str) -> DataValue | None:
@@ -268,7 +288,7 @@ class FlowAnalyzer:
         x = self.as_data(self.eval_expr(self.argument(node, 0, "X")))
         self.evaluate_keywords(node)
         self.record(FitEvent(node.lineno, name, "preprocess", "fit_transform", x, False))
-        estimator = self.fitted(EstimatorValue(name, "preprocess"), x, node.lineno)
+        estimator = self.fitted(EstimatorValue(name, "preprocess"), x, node.lineno, False)
         return self.transformed(x, estimator)
 
     def method_call(self, node: ast.Call, func: ast.Attribute) -> Value | None:
@@ -286,10 +306,12 @@ class FlowAnalyzer:
             return self.estimator_method(node, func, receiver)
         if isinstance(receiver, DataValue):
             statistic = self.statistic_name(node, func.attr)
-            if statistic is not None:
-                self.record(StatEvent(node.lineno, statistic, receiver, self.storing))
-            # A method on data (drop, fillna, median, to_numpy, ...) keeps its rows.
-            return merge_data([receiver, *self.data_operands(self.argument_nodes(node))])
+            # A method on data (drop, fillna, to_numpy, ...) keeps its rows.
+            result = merge_data([receiver, *self.data_operands(self.argument_nodes(node))])
+            if statistic is None:
+                return result
+            self.record(StatEvent(node.lineno, statistic, receiver, self.storing))
+            return replace(result, origin=receiver.origin, summary=True)
         self.evaluate_arguments(node)
         return None
 
@@ -353,13 +375,16 @@ class FlowAnalyzer:
             uses_y = y_node is not None
             event = FitEvent(node.lineno, estimator.cls, estimator.kind, method, x, uses_y)
             self.record(event)
-            estimator = self.fitted(estimator, x, node.lineno)
+            estimator = self.fitted(estimator, x, node.lineno, uses_y)
             if isinstance(func.value, ast.Name):
                 self.state.env[func.value.id] = estimator  # fit() changes the object in place
         if method == "fit":
             return estimator  # sklearn's fit returns self
         if method in ("fit_transform", "transform"):
-            return self.transformed(x, estimator)
+            output = self.transformed(x, estimator)
+            if self.is_held_out(x) and estimator.fit_taint is not None:
+                self.record(HeldOutTransformEvent(node.lineno, output))
+            return output
         if method == "fit_resample":
             return DataTuple((self.transformed(x, estimator), self.transformed(y, estimator)))
         return None  # predict, score, ... produce no tracked rows
@@ -384,11 +409,20 @@ class FlowAnalyzer:
         return node.id if isinstance(node, ast.Name) else "estimator"
 
     @staticmethod
-    def fitted(estimator: EstimatorValue, data: DataValue | None, line: int) -> EstimatorValue:
+    def is_held_out(data: DataValue | None) -> bool:
+        return data is not None and data.origin in (Origin.TEST, Origin.VALIDATION)
+
+    @staticmethod
+    def fitted(
+        estimator: EstimatorValue, data: DataValue | None, line: int, uses_y: bool
+    ) -> EstimatorValue:
         origin = data.origin if data is not None else None
+        # A model's fit taint only ever reaches data through its transform output.
+        model_kind = "select" if uses_y else "preprocess"
+        taint_kind = model_kind if estimator.kind == "model" else estimator.kind
         taint = None
-        if origin is Origin.FULL and estimator.kind in LEAKY_KINDS:
-            taint = Taint(line, estimator.kind)
+        if origin is Origin.FULL and taint_kind in LEAKY_KINDS:
+            taint = Taint(line, taint_kind)
         return EstimatorValue(estimator.cls, estimator.kind, origin, taint)
 
     @staticmethod
@@ -540,6 +574,9 @@ class FlowAnalyzer:
                 self.visit_block(handler.body)
             self.visit_block(node.orelse)
             self.visit_block(node.finalbody)
+        elif isinstance(node, ast.Match):
+            for case in node.cases:
+                self.visit_block(case.body)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self.visit_scope(node.body, self.parameter_names(node.args))
         elif isinstance(node, ast.ClassDef):

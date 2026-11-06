@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from foldsafe.catalog import estimator_kind
-from foldsafe.events import CVEvent, FitEvent, SplitEvent
+from foldsafe.events import CVEvent, FitEvent, HeldOutTransformEvent, SplitEvent
 from foldsafe.flow import FlowState, run_flow
 from foldsafe.values import DataValue, EstimatorValue, Origin, Taint
 
@@ -146,8 +146,13 @@ def test_fit_resample_taints_both_outputs():
 
 
 def test_model_fit_is_recorded_without_taint():
-    state = flow("model = LogisticRegression().fit(X, y)")
-    assert state.env["model"].fit_taint is None
+    state = flow(
+        """
+        model = LogisticRegression().fit(X, y)
+        predictions = model.predict(X)
+        """
+    )
+    assert "predictions" not in state.env
     assert fits(state)[0].kind == "model"
 
 
@@ -211,7 +216,7 @@ def marked_lines(path: Path, codes: set[str]) -> set[int]:
 
 
 def taints_reaching_splits_or_cv(path: Path) -> set[Taint]:
-    """Taints carried by data at the moment it is split or cross-validated."""
+    """Taints carried by data when it is split, cross-validated or transformed while held out."""
     state = run_flow(ast.parse(path.read_text(encoding="utf-8")))
     reached: set[Taint] = set()
     for event in state.events:
@@ -219,6 +224,8 @@ def taints_reaching_splits_or_cv(path: Path) -> set[Taint]:
             for value in event.inputs:
                 reached |= value.taints
         elif isinstance(event, CVEvent) and event.data is not None:
+            reached |= event.data.taints
+        elif isinstance(event, HeldOutTransformEvent):
             reached |= event.data.taints
     return reached
 

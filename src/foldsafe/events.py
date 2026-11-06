@@ -49,4 +49,12 @@ class StatEvent:
     stored: bool  # inside an assignment, so the result is kept (not just printed)
 
 
-Event = SplitEvent | CVEvent | FitEvent | StatEvent
+@dataclass(frozen=True)
+class HeldOutTransformEvent:
+    """Held-out rows go through something fitted on all rows: scaler.transform(X_test)."""
+
+    line: int
+    data: DataValue  # the output, carrying the taint of the full-data fit
+
+
+Event = SplitEvent | CVEvent | FitEvent | StatEvent | HeldOutTransformEvent

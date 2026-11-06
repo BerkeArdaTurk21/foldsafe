@@ -12,7 +12,8 @@ class Origin(str, Enum):
     FULL = "full"  # all labeled rows, before any split
     TRAIN = "train"  # training side of a split
     VALIDATION = "validation"  # held-out rows named X_val, X_cal, X_dev: not the final test set
-    TEST = "test"  # held-out side of a split, or a separate test file
+    TEST = "test"  # held-out side of a split
+    TEST_FILE = "test_file"  # a separate test file: rows no fit on the labeled data has seen
     COMBINED = "combined"  # train and test rows mixed together
 
 
@@ -30,6 +31,7 @@ class DataValue:
 
     origin: Origin
     taints: frozenset[Taint] = frozenset()
+    summary: bool = False  # a statistic of the rows (df.mean()), not rows themselves
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ def merge_origins(first: Origin, second: Origin) -> Origin:
     """Origin of a value computed from two others."""
     if first == second:
         return first
-    if Origin.COMBINED in (first, second) or Origin.TEST in (first, second):
+    if {Origin.COMBINED, Origin.TEST, Origin.TEST_FILE} & {first, second}:
         return Origin.COMBINED
     if Origin.FULL not in (first, second):
         return Origin.TRAIN  # refitting on train + validation stays on the training side
@@ -107,9 +109,13 @@ def merge_data(values: list[DataValue]) -> DataValue | None:
     """Combine several data values into one; None when the list is empty."""
     if not values:
         return None
-    origin = values[0].origin
+    # A statistic adds no rows: X_test.fillna(X_train.median()) is still the test rows.
+    rows = [value for value in values if not value.summary]
+    origin_sources = rows or values
+    origin = origin_sources[0].origin
+    for value in origin_sources:
+        origin = merge_origins(origin, value.origin)
     taints: frozenset[Taint] = frozenset()
     for value in values:
-        origin = merge_origins(origin, value.origin)
         taints |= value.taints
-    return DataValue(origin, taints)
+    return DataValue(origin, taints, summary=not rows)

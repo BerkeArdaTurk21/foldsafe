@@ -57,7 +57,7 @@ def test_file_named_test_is_test_data():
         holdout = read_csv("data/Test_Set.csv")
         """
     )
-    assert state.env["holdout"].origin is Origin.TEST
+    assert state.env["holdout"].origin is Origin.TEST_FILE
 
 
 def test_numpy_and_sklearn_dataset_sources():

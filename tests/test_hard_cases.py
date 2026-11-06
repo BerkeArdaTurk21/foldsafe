@@ -379,3 +379,106 @@ def test_one_finding_for_two_test_fits_on_one_line():
         a = StandardScaler().fit(X_test); b = StandardScaler().fit(X_test)
         """
     assert rule_lines(body) == [("FS004", 2)]
+
+
+# ------------------------------------------------ found by reviewing M2 (day 12)
+
+
+def test_fit_on_all_rows_after_the_split_is_found_when_test_rows_are_transformed():
+    body = """
+        X_train, X_test = train_test_split(X)
+        scaler = StandardScaler().fit(X)
+        a = scaler.transform(X_train)
+        b = scaler.transform(X_test)
+        c = scaler.transform(X_test)
+        """
+    assert rule_lines(body) == [("FS001", 2)]
+
+
+def test_fit_on_all_rows_before_the_split_is_found_when_validation_rows_are_transformed():
+    body = """
+        scaler = StandardScaler().fit(X)
+        X_train, X_val = train_test_split(X)
+        b = scaler.transform(X_val)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_full_fit_transforming_only_training_rows_or_a_test_file_is_not_reported():
+    body = """
+        test = pd.read_csv("test.csv")
+        X_train, X_held = train_test_split(X)
+        scaler = StandardScaler().fit(X)
+        a = scaler.transform(X_train)
+        b = scaler.transform(test)
+        """
+    assert rule_lines(body) == []
+
+
+def test_fit_on_a_test_file_is_still_reported():
+    body = """
+        test = pd.read_csv("test.csv")
+        scaler = StandardScaler().fit(test)
+        """
+    assert rule_lines(body) == [("FS004", 2)]
+
+
+def test_statistics_do_not_mix_rows():
+    body = """
+        import numpy as np
+        X_train, X_test, y_train, y_test = train_test_split(X, y)
+        error = np.abs(y_test - y_train.mean()).mean()
+        filled = X_test.fillna(X_train.median())
+        total = filled.sum()
+        scale_all = np.mean(y_train) + np.std(y_test)
+        """
+    assert rule_lines(body) == []
+
+
+def test_statistic_taints_still_reach_the_frame():
+    body = """
+        S = StandardScaler().fit_transform(X)
+        filled = df.fillna(S.mean())
+        X_a, X_b = train_test_split(filled)
+        """
+    assert rule_lines(body) == [("FS001", 1)]
+
+
+def test_models_used_as_transformers_leave_a_taint():
+    body = """
+        from sklearn.cluster import KMeans
+        from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+        distances = KMeans(3).fit_transform(X)
+        X_a, X_b = train_test_split(distances)
+        projected = LDA().fit(X, y).transform(X)
+        X_c, X_d = train_test_split(projected)
+        """
+    assert rule_lines(body) == [("FS001", 3), ("FS002", 5)]
+
+
+def test_stateless_transformers_leave_no_taint():
+    body = """
+        from sklearn.preprocessing import LabelEncoder, PolynomialFeatures
+        poly = PolynomialFeatures(2).fit_transform(X)
+        labels = LabelEncoder().fit_transform(y)
+        X_a, X_b, y_a, y_b = train_test_split(poly, labels)
+        """
+    assert rule_lines(body) == []
+
+
+def test_conditional_expressions_dicts_match_and_more_readers():
+    body = """
+        S = StandardScaler().fit_transform(X) if len(X) else X
+        X_a, X_b = train_test_split(S)
+        Z = StandardScaler().fit_transform(X)
+        frame = pd.DataFrame({"z": Z})
+        X_c, X_d = train_test_split(frame)
+        match "x":
+            case "x":
+                M = StandardScaler().fit_transform(X)
+                X_e, X_f = train_test_split(M)
+        rows = pd.read_sql("select 1", None)
+        Q = StandardScaler().fit_transform(rows)
+        X_g, X_h = train_test_split(Q)
+        """
+    assert rule_lines(body) == [("FS001", line) for line in (1, 3, 8, 11)]

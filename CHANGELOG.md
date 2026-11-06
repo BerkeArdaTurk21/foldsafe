@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Missed leak: a fit on all rows that transforms held-out rows was not reported unless its
+  output was split, so `split; scaler.fit(X); scaler.transform(X_test)` passed. It is now
+  FS001 (FS002 if it learned from `y`). A separate test file stays fine: it has its own
+  origin, `test_file`.
+- Missed leak: estimators outside the transformer list used as transformers (LDA, KMeans)
+  left no mark. Steps that learn nothing about the values (`PolynomialFeatures`,
+  `LabelEncoder`) are now listed as stateless so they never count.
+- Missed leak: conditional expressions, dicts passed to `pd.DataFrame`, `match` blocks, and
+  more pandas readers (`read_sql`, `read_hdf`, ...) were not followed.
+- False alarm: a statistic counted as rows, so `y_test - y_train.mean()` and
+  `X_test.fillna(X_train.median())` were treated as train and test mixed.
 - Missed leak: `pd.DataFrame(...)` and `np.asarray(...)` dropped the origin and marks of their
   input, and other numpy and pandas functions (`np.log1p`, `pd.get_dummies`) dropped the data
   entirely. `pd.DataFrame(scaler.fit_transform(X), columns=X.columns)` before a split is now

@@ -35,16 +35,23 @@ Wrappers and helpers from numpy and pandas keep the rows and marks of their inpu
 followed. A file counts as test rows when `test` appears as a word in its path or variable
 (`test.csv`, `DATA_DIR / "test.csv"`, `TEST_PATH`), but not `latest_prices.csv`.
 
-Three judgment calls keep false alarms down:
+A fit on all rows is reported when its output is split afterwards, or when it transforms
+rows a split held out (`scaler.fit(X); scaler.transform(X_test)`), even if the split came
+first. Transforming a separate test file is fine: that file was never part of the fit.
+
+Four judgment calls keep false alarms down:
 
 - **Unlisted classes count as transformers.** A custom or third-party class fitted on data
   (`MyEncoder().fit_transform(X, y)`) is treated like a scikit-learn one, and passing `y`
   counts as learning from the labels. A model fitted the same way leaves no trace, because
-  only `transform` output carries the mark.
+  only `transform` output carries the mark. Steps that learn nothing about the row values
+  (`PolynomialFeatures`, `LabelEncoder`, `Normalizer`) never count.
 - **Names decide what a held-out part is for.** In `X_train, X_cal = train_test_split(X)`, a
   held-out part whose name contains `val`, `valid`, `validation`, `cal`, `calib`,
   `calibration` or `dev` as a word is a validation set: fitting a calibrator on it, or
   refitting on train + validation, is not reported. Any other name counts as test rows.
+- **A statistic is not rows.** `X_test.fillna(X_train.median())` and
+  `y_test - y_train.mean()` keep the test rows; nothing is mixed.
 - **Selecting rows ends "mixed".** `combined.iloc[:n]` may be just the train rows, so fitting
   on it is not reported. Leaks in `combined` itself are reported where they happen.
 

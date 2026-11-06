@@ -11,8 +11,10 @@ def _qualify(module: str, names: str) -> list[str]:
 #   preprocess  learns statistics from X (scalers, imputers, encoders, decompositions)
 #   select      learns from y as well (feature selectors, target encoders)
 #   resample    creates or removes rows from X and y (imblearn samplers)
+#   stateless   learns nothing about the row values (PolynomialFeatures, LabelEncoder)
 #   pipeline    a container; its kind depends on its steps (see FlowAnalyzer.pipeline_kind)
-#   model       any other estimator; fitting it is never a leak on its own
+#   model       any other estimator; fitting it is never a leak on its own, but its
+#               transform output (LDA, KMeans) carries what it learned, like a transformer
 ESTIMATOR_KINDS: dict[str, str] = {}
 
 for module, names in {
@@ -45,6 +47,16 @@ for module, names in {
     "imblearn.combine": "SMOTEENN SMOTETomek",
 }.items():
     ESTIMATOR_KINDS.update({qualified: "resample" for qualified in _qualify(module, names)})
+
+for module, names in {
+    "sklearn.preprocessing": (
+        "PolynomialFeatures Normalizer Binarizer FunctionTransformer "
+        "LabelEncoder LabelBinarizer MultiLabelBinarizer"
+    ),
+    "sklearn.feature_extraction": "FeatureHasher",
+    "sklearn.feature_extraction.text": "HashingVectorizer",
+}.items():
+    ESTIMATOR_KINDS.update({qualified: "stateless" for qualified in _qualify(module, names)})
 
 for module, names in {
     "sklearn.pipeline": "Pipeline make_pipeline",
