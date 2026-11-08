@@ -49,7 +49,8 @@ GridSearchCV(pipeline, {"model__C": [0.1, 1, 10]}).fit(X, y)
 ```python
 # Leaky
 X_test_scaled = scaler.fit_transform(X_test)
-both = pd.concat([train, test]); both["Age"] = both["Age"].fillna(both["Age"].median())
+both = pd.concat([train, test])
+both["Age"] = both["Age"].fillna(both["Age"].median())
 
 # Fixed: learn from training rows, reuse for test rows
 X_test_scaled = scaler.transform(X_test)
@@ -69,8 +70,12 @@ df["ticket_rate"] = df.groupby("Ticket")["Survived"].transform("mean")
 
 # Fixed: SimpleImputer / TargetEncoder in a Pipeline, or compute on the training rows only
 pipeline = make_pipeline(
-    ColumnTransformer([("age", SimpleImputer(strategy="median"), ["Age"]),
-                       ("ticket", TargetEncoder(), ["Ticket"])]),
+    ColumnTransformer(
+        [
+            ("age", SimpleImputer(strategy="median"), ["Age"]),
+            ("ticket", TargetEncoder(), ["Ticket"]),
+        ]
+    ),
     model,
 )
 ```
@@ -84,6 +89,7 @@ cross_val_score(model, X_res, y_res)
 
 # Fixed: imblearn's Pipeline resamples training folds only
 from imblearn.pipeline import Pipeline
+
 cross_val_score(Pipeline([("smote", SMOTE()), ("model", model)]), X, y)
 ```
 
@@ -91,7 +97,8 @@ cross_val_score(Pipeline([("smote", SMOTE()), ("model", model)]), X, y)
 
 ```python
 # Leaky (optimistic): the best of many settings on the same folds
-search.fit(X, y); print(search.best_score_)
+search.fit(X, y)
+print(search.best_score_)
 
 # Fixed: nested CV, or a held-out test set scored once
 cross_val_score(search, X, y, cv=outer_cv)
@@ -101,7 +108,7 @@ cross_val_score(search, X, y, cv=outer_cv)
 
 ```python
 # Leaky
-train_test_split(X, y)                      # shuffles by default
+train_test_split(X, y)  # shuffles by default
 KFold(n_splits=5, shuffle=True)
 
 # Fixed: keep time order
