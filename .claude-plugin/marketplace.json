@@ -1,0 +1,11 @@
+{
+  "name": "foldsafe",
+  "owner": { "name": "Berke Arda Türk" },
+  "plugins": [
+    {
+      "name": "foldsafe",
+      "source": "./",
+      "description": "Find and fix data leakage in ML code with the foldsafe static analyzer."
+    }
+  ]
+}

@@ -95,11 +95,25 @@ Exit code 1 lets CI stop a build. `--format json` is for tools and coding agents
 cells are read in file order, IPython lines (`%magic`, `!shell`) are ignored, and a cell
 that is not valid Python is skipped and named in the output.
 
+## Use it from a coding agent
+
+The repository is also a Claude Code plugin with a `foldsafe` skill. The skill runs
+`foldsafe check`, explains each finding, rewrites the code with a `Pipeline`, runs the check
+again, and then goes through the leaks static analysis cannot see (target-derived features,
+groups split across folds, time order, choosing models by test score).
+
+```text
+/plugin marketplace add BerkeArdaTurk21/foldsafe
+/plugin install foldsafe@foldsafe
+```
+
+The skill itself is plain Markdown in [`skills/foldsafe/`](skills/foldsafe/), so other agents
+that read `SKILL.md` files can use it too.
+
 ## Roadmap
 
 | When | What |
 |---|---|
-| Nov 2026 | Agent skill for Claude Code, Codex and Cursor: the agent runs foldsafe, explains and fixes each finding |
 | Dec 2026 | FS005–FS008 and a precision/recall benchmark on the example corpus |
 | Dec 2026 | `pip install foldsafe` (0.1.0), SARIF output and a GitHub Action |
 

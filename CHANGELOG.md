@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format follows
   pinned (`ruff==0.17.3`) so local and CI results match.
 
 ### Added
+- Agent skill `skills/foldsafe/SKILL.md` with a fix catalog for every rule, and Claude Code
+  plugin manifests (`.claude-plugin/`) so the repository installs with `/plugin install`.
 - `foldsafe check` now reports findings, as text or as JSON (`--format json`), and exits 0 when
   no leak is found, 1 when one is, and 2 when a file could not be analyzed.
 - Jupyter notebook support: code cells are joined in file order, findings point at a cell and

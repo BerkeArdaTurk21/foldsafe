@@ -1,0 +1,10 @@
+{
+  "name": "foldsafe",
+  "version": "0.0.1",
+  "description": "Find and fix data leakage in ML code: runs the foldsafe static analyzer, explains each finding and rewrites the code with scikit-learn Pipelines.",
+  "author": { "name": "Berke Arda Türk" },
+  "homepage": "https://github.com/BerkeArdaTurk21/foldsafe",
+  "repository": "https://github.com/BerkeArdaTurk21/foldsafe",
+  "license": "MIT",
+  "keywords": ["machine-learning", "data-leakage", "scikit-learn", "jupyter", "static-analysis"]
+}
