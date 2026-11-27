@@ -175,7 +175,7 @@ is kept is. FS004 takes precedence over FS005.
 
 ## FS005 · pandas statistic on the full frame stored as a feature before the split
 
-Severity: error · Status: planned (M5) · Reported on: the line that stores the statistic
+Severity: error · Status: active · Reported on: the line that computes the statistic
 
 **Why it leaks.** `df["Age"].fillna(df["Age"].median())`, a hand-written z-score, or a group
 target rate (`groupby(...)["Survived"].transform("mean")`) uses every row, including the
@@ -185,6 +185,11 @@ evaluation rows. A target rate even puts each row's own label into its features.
 df["Age"] = df["Age"].fillna(df["Age"].median())  # FS005
 df["ticket_survival"] = df.groupby("Ticket")["Survived"].transform("mean")  # FS005
 ```
+
+It is reported when the statistic is kept in data that is later split or cross-validated.
+Printing a statistic (exploration) and row-wise operations such as `df[cols].sum(axis=1)`,
+which use only each row's own values, are not reported. Neither is a statistic of all rows
+used to fit a final model when nothing is evaluated afterwards.
 
 **Fix.** Use a transformer inside the `Pipeline`, so the statistic is learned per fold.
 

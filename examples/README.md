@@ -38,7 +38,7 @@ One leak produces one finding, from the most specific rule:
 | FS002 | the same, for a fit that learned from `y` (selector, target encoder); wins over FS001 and FS003 |
 | FS003 | the CV / search call that receives data preprocessed on all rows |
 | FS004 | the `fit` on test rows, or the statistic computed on train + test combined; wins over FS005 |
-| FS005 | the line that stores a full-frame pandas statistic in the frame before the split or CV |
+| FS005 | the line that computes a full-frame statistic later kept in data that is split or cross-validated |
 | FS006 | the `fit_resample` call before the split or CV; wins over FS003 |
 | FS007 | the line that reports or stores `best_score_` |
 | FS008 | the shuffled split or `KFold(shuffle=True)` call |

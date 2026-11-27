@@ -45,7 +45,7 @@ notebook the place is a cell and a line: `churn.ipynb:cell 4:2`.
 | [FS002](docs/rules.md#fs002--target-aware-feature-selection-fitted-outside-the-split-or-cv-loop) | Feature selection or target encoding that learned from all labels | ✅ active |
 | [FS003](docs/rules.md#fs003--data-preprocessed-on-all-rows-is-passed-into-cross-validation-or-a-search) | Data preprocessed on all rows passed to `cross_val_score` / `GridSearchCV` | ✅ active |
 | [FS004](docs/rules.md#fs004--test-data-used-for-fitting-or-statistics-computed-on-train--test-combined) | Fitting on test rows, or statistics of train + test combined | ✅ active |
-| [FS005](docs/rules.md#fs005--pandas-statistic-on-the-full-frame-stored-as-a-feature-before-the-split) | pandas statistics of the full frame kept as features before the split | planned |
+| [FS005](docs/rules.md#fs005--pandas-statistic-on-the-full-frame-stored-as-a-feature-before-the-split) | pandas statistics of the full frame kept as features before the split | ✅ active |
 | [FS006](docs/rules.md#fs006--oversampling-applied-before-the-split-or-outside-an-imblearn-pipeline) | SMOTE / oversampling before the split or outside an imblearn `Pipeline` | planned |
 | [FS007](docs/rules.md#fs007--best_score_-from-a-hyperparameter-search-reported-as-the-final-score) | `best_score_` reported as the final score (nested CV missing) | planned |
 | [FS008](docs/rules.md#fs008--shuffled-split-or-kfold-on-data-that-has-a-date-column) | Shuffled split or KFold on time-ordered data | planned |
@@ -60,8 +60,8 @@ Why each rule leaks, with a leaky and a fixed example: [`docs/rules.md`](docs/ru
   test rows, or train and test mixed. A transformer fitted on all rows leaves a mark on its
   output, and the mark is traced through reassignments, loops, `if` blocks and calls to
   your own helper functions to the split or cross-validation call it reaches.
-- **Tested against labeled examples.** [`examples/`](examples/) holds 34 leaky scripts with
-  the expected finding marked on its line, and 33 clean scripts, many of them near misses
+- **Tested against labeled examples.** [`examples/`](examples/) holds 35 leaky scripts with
+  the expected finding marked on its line, and 34 clean scripts, many of them near misses
   (exploring the full data, refitting the final model after evaluation, a hand-written fold
   loop). Every active rule finds all of its leaky examples and flags no clean one.
 - **Tried on real code.** It parses scikit-learn's 671 source files in a few seconds
