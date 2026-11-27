@@ -21,13 +21,22 @@ Every example below is a shortened version of a script in [`examples/`](../examp
 foldsafe reads code top to bottom and keeps track of where each variable's rows came from.
 
 - **Followed:** reassignment (`X = scaler.fit_transform(X)`), `if` / `for` / `while` /
-  `with` / `try` blocks, and the bodies of functions, methods and nested functions. A
-  function body sees the module's imports and the variables defined before it; its
-  parameters are treated as unknown, and its own assignments stay local.
-- **Not followed (v0.1):** data that moves between functions (a function returns scaled
-  data that is split somewhere else), values stored on objects (`self.X = ...`), code built
-  dynamically (`exec`, `getattr`), and helpers from your own modules. In these cases
-  foldsafe stays silent rather than guess.
+  `with` / `try` blocks, and the bodies of functions, methods and nested functions.
+- **Calls to your own functions:** a call to a function defined in the same file or
+  notebook is followed into its body with the call's arguments, and its return value is
+  the call's value. So `X = preprocess(df)` carries the mark of a scaler fitted inside
+  `preprocess`, and `evaluate(model, data=X_leak)` reaches the `cross_validate` inside
+  `evaluate`. A finding points at the line inside the function. Calls are followed three
+  levels deep, and a function that calls itself is not followed again. A function that is
+  never called is still checked once, with its parameters unknown.
+- **Your own data loaders:** a function from your own package that is given a data file
+  path (`load_raw(DATA_DIR / "train.csv")`, `read_table("sales.xlsx")`) is treated as
+  loading that file. Its body in the other file is not read.
+- **Not followed (v0.1):** values stored on objects (`self.X = ...`), method calls on your
+  own classes, lambdas, the bodies of helpers in other files, and code built dynamically
+  (`exec`, `getattr`). In these cases foldsafe stays silent rather than guess. When a
+  function returns rows of different origins from different branches, its result is not
+  guessed either.
 - Both branches of an `if` are assumed to run, so a leak behind a flag is still reported.
 
 Wrappers and helpers from numpy and pandas keep the rows and marks of their input, so

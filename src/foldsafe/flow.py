@@ -3,15 +3,17 @@
 The pass walks module-level statements top to bottom, including the bodies of
 if/for/while/with/try blocks, and keeps an abstract value for each variable.
 Along the way it records events (splits, cross-validation, fits) for the rule checkers.
-Function and class bodies are analyzed on their own (see visit_scope); flows between
-functions are not followed. Code is parsed, never executed.
+Function and class bodies are analyzed where they are defined (see visit_scope), and a call
+to a function defined in the same file is followed into its body with the call's arguments
+(see call_function). Methods, lambdas and helpers from other files are not followed.
+Code is parsed, never executed.
 """
 
 from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 
 from foldsafe.catalog import FUNCTIONAL_TRANSFORMERS, LEAKY_KINDS, estimator_kind
@@ -38,6 +40,9 @@ from foldsafe.values import (
     Value,
     merge_data,
 )
+
+# Values a variable keeps; anything else makes the pass forget the name.
+TRACKED = (DataValue, EstimatorValue, SplitterValue, SearchValue, IndexValue)
 
 FIT_METHODS = {"fit", "fit_transform", "fit_resample"}
 
@@ -90,6 +95,45 @@ FILE_READERS = {
     "polars.read_parquet",
 }
 IN_MEMORY_SOURCES = {"pandas.DataFrame", "numpy.array", "numpy.asarray"}
+
+# A call into the project's own code (from titanic.data import load_raw) that is given a
+# data file path loads that file: load_raw(DATA_DIR / "train.csv").
+DATA_FILE = re.compile(
+    r"\.(csv|tsv|parquet|pq|feather|arrow|xlsx|xls|orc|dta|sav)(\.(gz|bz2|xz|zip))?$",
+    re.IGNORECASE,
+)
+# Modules whose functions take a data file path but do not return its rows.
+NON_DATA_MODULES = {
+    "builtins",
+    "glob",
+    "io",
+    "joblib",
+    "json",
+    "kaggle",
+    "kagglehub",
+    "keras",
+    "logging",
+    "matplotlib",
+    "os",
+    "pathlib",
+    "pickle",
+    "plotly",
+    "requests",
+    "seaborn",
+    "shutil",
+    "subprocess",
+    "sys",
+    "tarfile",
+    "tensorflow",
+    "torch",
+    "urllib",
+    "zipfile",
+}
+
+# Calls into functions defined in the same file are followed this many levels deep.
+MAX_CALL_DEPTH = 3
+
+Function = ast.FunctionDef | ast.AsyncFunctionDef
 DATASET_PREFIXES = ("sklearn.datasets.load_", "sklearn.datasets.fetch_", "sklearn.datasets.make_")
 
 # Calls whose result mixes the rows of every data argument.
@@ -157,12 +201,15 @@ class FlowState:
     env: dict[str, TrackedValue] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
     describe_line: Callable[[int], str] = lambda line: f"line {line}"  # how messages name a line
+    functions: dict[str, Function] = field(default_factory=dict)  # defined in this file
 
 
 class FlowAnalyzer:
-    def __init__(self, state: FlowState | None = None) -> None:
+    def __init__(self, state: FlowState | None = None, call_stack: tuple[str, ...] = ()) -> None:
         self.state = state or FlowState()
         self.storing = False  # the current statement assigns its result
+        self.call_stack = call_stack  # functions being followed, outermost first
+        self.returns: list[Value | None] | None = None  # set while following a call
 
     # ------------------------------------------------------------------ names
 
@@ -179,15 +226,19 @@ class FlowAnalyzer:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
-                    self.state.imports[alias.asname] = alias.name
+                    self.imported(alias.asname, alias.name)
                 else:
                     top = alias.name.split(".", 1)[0]
-                    self.state.imports[top] = top
+                    self.imported(top, top)
             return
         if node.module is None or node.level:
             return  # relative imports point at the user's own code
         for alias in node.names:
-            self.state.imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            self.imported(alias.asname or alias.name, f"{node.module}.{alias.name}")
+
+    def imported(self, local: str, qualified: str) -> None:
+        self.state.imports[local] = qualified
+        self.state.functions.pop(local, None)  # the import replaces a function of that name
 
     # ------------------------------------------------------------ expressions
 
@@ -236,8 +287,15 @@ class FlowAnalyzer:
 
     def eval_call(self, node: ast.Call) -> Value | None:
         name = self.qualified_name(node.func)
+        if (
+            name is None
+            and isinstance(node.func, ast.Name)
+            and node.func.id in self.state.functions
+        ):
+            return self.call_function(node, self.state.functions[node.func.id])
         if name in FILE_READERS:
-            return DataValue(Origin.TEST_FILE if self.names_test_file(node) else Origin.FULL)
+            path = node.args[0] if node.args else None
+            return DataValue(Origin.TEST_FILE if self.mentions_test(path) else Origin.FULL)
         if name in IN_MEMORY_SOURCES:
             # pd.DataFrame(scaled, columns=X.columns) wraps its first argument: same rows, same
             # taints. The keywords add no rows, even when they read from another frame.
@@ -273,6 +331,97 @@ class FlowAnalyzer:
             item = self.eval_expr(node.args[0])
             return Enumerated(item) if isinstance(item, FoldIndices) else None
         self.evaluate_arguments(node)  # print(cross_val_score(...)) still records the event
+        path = self.data_file_argument(node) if name else None
+        if path is not None and name.split(".", 1)[0] not in NON_DATA_MODULES:
+            return DataValue(Origin.TEST_FILE if self.mentions_test(path) else Origin.FULL)
+        return None
+
+    # ---------------------------------------------------- calls into own code
+
+    def call_function(self, node: ast.Call, function: Function) -> Value | None:
+        """Follow a call to a function defined in this file into its body.
+
+        The parameters get the call's argument values, the body sees the variables known
+        at the call, its events are recorded, and its return value is the call's value.
+        Recursion and calls deeper than MAX_CALL_DEPTH are not followed.
+        """
+        starred = any(isinstance(argument, ast.Starred) for argument in node.args)
+        positional = [self.eval_expr(argument) for argument in node.args]
+        named = {kw.arg: self.eval_expr(kw.value) for kw in node.keywords if kw.arg}
+        if function.name in self.call_stack or len(self.call_stack) >= MAX_CALL_DEPTH:
+            return None
+        bound = self.bind_parameters(function.args, [] if starred else positional, named)
+        parameters = self.parameter_names(function.args)
+        env = {name: value for name, value in self.state.env.items() if name not in parameters}
+        env.update({name: value for name, value in bound.items() if isinstance(value, TRACKED)})
+        local = FlowState(
+            dict(self.state.imports),
+            env,
+            self.state.events,
+            self.state.describe_line,
+            dict(self.state.functions),
+        )
+        callee = FlowAnalyzer(local, (*self.call_stack, function.name))
+        callee.returns = []
+        callee.visit_block(function.body)
+        return self.combine_returns(callee.returns)
+
+    def bind_parameters(
+        self,
+        arguments: ast.arguments,
+        positional: list[Value | None],
+        named: dict[str, Value | None],
+    ) -> dict[str, Value | None]:
+        """Parameter name -> value: from the call, else from the default, else unknown."""
+        values: dict[str, Value | None] = {}
+        ordered = [*arguments.posonlyargs, *arguments.args]
+        first_default = len(ordered) - len(arguments.defaults)
+        for index, parameter in enumerate(ordered):
+            if index < len(positional):
+                values[parameter.arg] = positional[index]
+            elif parameter.arg in named:
+                values[parameter.arg] = named[parameter.arg]
+            elif index >= first_default:
+                values[parameter.arg] = self.eval_expr(arguments.defaults[index - first_default])
+        for parameter, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True):
+            if parameter.arg in named:
+                values[parameter.arg] = named[parameter.arg]
+            elif default is not None:
+                values[parameter.arg] = self.eval_expr(default)
+        return values
+
+    @staticmethod
+    def combine_returns(returns: list[Value | None]) -> Value | None:
+        """One value for all return statements; rows of different origins are not guessed."""
+        values = [value for value in returns if value is not None]
+        if not values:
+            return None
+        if len(values) == 1:
+            return values[0]
+        if all(isinstance(value, DataValue) for value in values):
+            return merge_same_origin(values)
+        lengths = {len(value.parts) for value in values if isinstance(value, DataTuple)}
+        if all(isinstance(value, DataTuple) for value in values) and len(lengths) == 1:
+            columns = zip(*(value.parts for value in values), strict=True)
+            return DataTuple(tuple(merge_same_origin(column) for column in columns))
+        return None
+
+    def eval_return(self, node: ast.expr | None) -> Value | None:
+        """`return train, test` keeps the two parts apart, like train_test_split's result."""
+        if isinstance(node, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in node.elts):
+            return DataTuple(tuple(self.as_data(self.eval_expr(element)) for element in node.elts))
+        return self.eval_expr(node)
+
+    def data_file_argument(self, node: ast.Call) -> ast.expr | None:
+        """The argument that names a data file (train.csv, sales.xlsx), if any."""
+        for argument in self.argument_nodes(node):
+            for part in ast.walk(argument):
+                if (
+                    isinstance(part, ast.Constant)
+                    and isinstance(part.value, str)
+                    and DATA_FILE.search(part.value)
+                ):
+                    return argument
         return None
 
     def array_function(self, node: ast.Call, name: str) -> DataValue | None:
@@ -520,11 +669,11 @@ class FlowAnalyzer:
         return default
 
     @staticmethod
-    def names_test_file(node: ast.Call) -> bool:
+    def mentions_test(path: ast.expr | None) -> bool:
         """True for test.csv, DATA_DIR / "test.csv" and TEST_PATH; False for latest_prices.csv."""
-        if not node.args:
+        if path is None:
             return False
-        for part in ast.walk(node.args[0]):
+        for part in ast.walk(path):
             text = None
             if isinstance(part, ast.Constant) and isinstance(part.value, str):
                 text = part.value
@@ -558,8 +707,12 @@ class FlowAnalyzer:
             self.bind(node.target, self.eval_expr(node.value))
         elif isinstance(node, ast.AugAssign):
             self.bind(node.target, merge_data(self.data_operands([node.target, node.value])))
-        elif isinstance(node, (ast.Expr, ast.Return)):
-            self.eval_expr(node.value)  # return cross_val_score(...) still records the event
+        elif isinstance(node, ast.Return):
+            value = self.eval_return(node.value)  # return cross_val_score(...) records the event
+            if self.returns is not None:
+                self.returns.append(value)
+        elif isinstance(node, ast.Expr):
+            self.eval_expr(node.value)
         elif isinstance(node, (ast.If, ast.While)):
             self.eval_expr(node.test)
             self.visit_block(node.body)
@@ -580,8 +733,11 @@ class FlowAnalyzer:
             for case in node.cases:
                 self.visit_block(case.body)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self.state.functions[node.name] = node
             self.visit_scope(node.body, self.parameter_names(node.args))
         elif isinstance(node, ast.ClassDef):
+            self.state.env.pop(node.name, None)
+            self.state.functions.pop(node.name, None)
             self.visit_scope(node.body, set())
 
     def visit_scope(self, body: list[ast.stmt], parameters: set[str]) -> None:
@@ -589,11 +745,14 @@ class FlowAnalyzer:
 
         It sees the module's imports and the variables known so far, minus names its
         parameters shadow (their values are unknown). Its assignments stay local; its
-        events are kept. Flows between functions are not followed.
+        events are kept. A function that is called is followed again at each call, with
+        the call's arguments (call_function); this pass covers the functions never called.
         """
         env = {name: value for name, value in self.state.env.items() if name not in parameters}
-        local = FlowState(dict(self.state.imports), env, self.state.events)
-        FlowAnalyzer(local).visit_block(body)
+        local = FlowState(
+            dict(self.state.imports), env, self.state.events, functions=dict(self.state.functions)
+        )
+        FlowAnalyzer(local, self.call_stack).visit_block(body)
 
     @staticmethod
     def parameter_names(arguments: ast.arguments) -> set[str]:
@@ -609,9 +768,8 @@ class FlowAnalyzer:
         elif isinstance(target, ast.Starred):
             self.bind(target.value, value)
         elif isinstance(target, ast.Name):
-            if isinstance(
-                value, (DataValue, EstimatorValue, SplitterValue, SearchValue, IndexValue)
-            ):
+            self.state.functions.pop(target.id, None)  # the name no longer means the function
+            if isinstance(value, TRACKED):
                 self.state.env[target.id] = value
             else:
                 self.state.env.pop(target.id, None)
@@ -647,6 +805,16 @@ class FlowAnalyzer:
             part = value if isinstance(value, DataValue) else None
             for target in targets:
                 self.bind(target, part)
+
+
+def merge_same_origin(values: Iterable[DataValue | None]) -> DataValue | None:
+    """Merge the taints of values from the same rows; None when the origins differ."""
+    present = list(values)
+    if not present or any(value is None for value in present):
+        return None
+    if len({value.origin for value in present}) != 1:
+        return None
+    return merge_data(present)
 
 
 def run_flow(tree: ast.Module, state: FlowState | None = None) -> FlowState:
