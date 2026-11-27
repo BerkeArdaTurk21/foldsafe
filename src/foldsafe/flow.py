@@ -71,6 +71,10 @@ STAT_METHODS = {
 }
 # groupby(...).transform("mean") and .agg("mean") summarize too.
 AGGREGATING_METHODS = {"transform", "agg", "aggregate"}
+# Statistic methods whose first positional argument is the axis: df.sum(1).
+AXIS_FIRST_METHODS = {"mean", "median", "std", "var", "mode", "min", "max", "sum"}
+# axis values that compute along each row instead of down each column.
+ROW_WISE_AXES = (1, "columns")
 
 # Calls that load a dataset. A file name containing "test" yields TEST_FILE rows.
 FILE_READERS = {
@@ -429,9 +433,9 @@ class FlowAnalyzer:
         self.evaluate_keywords(node)
         data = merge_data(self.data_operands(node.args))
         statistic = name.rsplit(".", 1)[-1]
-        if data is not None and statistic in STAT_METHODS:
+        if data is not None and statistic in STAT_METHODS and not self.row_wise(node, 1):
             self.record(StatEvent(node.lineno, statistic, data, self.storing))
-            return replace(data, summary=True)
+            return self.statistic_of(data, replace(data, summary=True), node.lineno)
         return data
 
     def functional_transform(self, node: ast.Call, name: str) -> DataValue | None:
@@ -462,14 +466,32 @@ class FlowAnalyzer:
             if statistic is None:
                 return result
             self.record(StatEvent(node.lineno, statistic, receiver, self.storing))
-            return replace(result, origin=receiver.origin, summary=True)
+            summary = replace(result, origin=receiver.origin, summary=True)
+            return self.statistic_of(receiver, summary, node.lineno)
         self.evaluate_arguments(node)
         return None
 
     @staticmethod
-    def statistic_name(node: ast.Call, method: str) -> str | None:
+    def statistic_of(rows: DataValue, result: DataValue, line: int) -> DataValue:
+        """A statistic of all rows carries a "stat" mark: wherever it is kept, so are they."""
+        if rows.origin is not Origin.FULL:
+            return result
+        return replace(result, taints=result.taints | {Taint(line, "stat")})
+
+    @staticmethod
+    def row_wise(node: ast.Call, axis_position: int | None) -> bool:
+        """sum(axis=1), mean(axis="columns"), np.max(X, 1): each row uses its own values only."""
+        axis = FlowAnalyzer.keyword(node, "axis")
+        if axis is None and axis_position is not None and len(node.args) > axis_position:
+            axis = node.args[axis_position]
+        return isinstance(axis, ast.Constant) and axis.value in ROW_WISE_AXES
+
+    @classmethod
+    def statistic_name(cls, node: ast.Call, method: str) -> str | None:
         if method in STAT_METHODS:
-            return method
+            # df.mean(1) passes the axis first; quantile(0.5) and value_counts() do not.
+            axis_position = 0 if method in AXIS_FIRST_METHODS else None
+            return None if cls.row_wise(node, axis_position) else method
         first = node.args[0] if node.args else None
         if (
             method in AGGREGATING_METHODS

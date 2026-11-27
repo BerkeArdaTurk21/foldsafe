@@ -441,7 +441,8 @@ def test_statistic_taints_still_reach_the_frame():
         filled = df.fillna(S.mean())
         X_a, X_b = train_test_split(filled)
         """
-    assert rule_lines(body) == [("FS001", 1)]
+    # The scaler's taint reaches the split (FS001), and so does the mean of all rows (FS005).
+    assert rule_lines(body) == [("FS001", 1), ("FS005", 2)]
 
 
 def test_models_used_as_transformers_leave_a_taint():

@@ -154,10 +154,37 @@ def check_fs004(state: FlowState, path: str) -> Iterator[Finding]:
             )
 
 
+def check_fs005(state: FlowState, path: str) -> Iterator[Finding]:
+    """A statistic of all rows, kept in data that is later split or cross-validated.
+
+    Reported where the statistic is computed. A statistic of train + test combined is
+    FS004 instead: its rows are COMBINED, not FULL, so it never carries a "stat" mark.
+    """
+    reached = split_taints(state) | cv_taints(state)
+    leaked = {taint for taint in reached if taint.kind == "stat"}
+    for taint in sorted(leaked, key=lambda taint: taint.line):
+        methods = sorted(
+            {
+                event.method.rsplit(":", 1)[-1]
+                for event in state.events
+                if isinstance(event, StatEvent) and event.line == taint.line
+            }
+        )
+        named = " and ".join(methods) or "statistic"
+        yield finding(
+            "FS005",
+            path,
+            taint.line,
+            f"The {named} is computed on all rows, including the rows held out for "
+            "evaluation, and kept in data that is later split or cross-validated.",
+        )
+
+
 # Implemented checkers, keyed by rule code. Filled in as rules land (M2, M5).
 CHECKERS: dict[str, Checker] = {
     "FS001": check_fs001,
     "FS002": check_fs002,
     "FS003": check_fs003,
     "FS004": check_fs004,
+    "FS005": check_fs005,
 }

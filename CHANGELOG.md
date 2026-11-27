@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- FS005 is active: a statistic of all rows (`median`, `mean`, `std`, `mode`, `value_counts`,
+  `groupby(...).transform("mean")`, `np.mean(X, axis=0)`) that is kept in data later split or
+  cross-validated. Reported where the statistic is computed, naming it. Printed statistics
+  and row-wise operations (`sum(axis=1)`) are not reported.
 - Calls to functions defined in the same file or notebook are followed into their body
   with the call's arguments, and the return value carries the marks of what happened
   inside. A scaler fitted in a `preprocess(df)` helper, a split done by a helper, and leaky
@@ -17,6 +21,8 @@ All notable changes to this project are documented here. The format follows
   says `test`. Functions from `pathlib`, `os`, `joblib` and similar modules do not.
 
 ### Fixed
+- Row-wise operations (`df[cols].sum(axis=1)`, `mean(axis="columns")`, `np.max(X, 1)`) were
+  treated as column statistics; they now keep their rows and are never a statistic.
 - A project located inside a folder named `venv` or similar was skipped entirely; only folders
   inside the given path count now.
 - Missed leak: a fit on all rows that transforms held-out rows was not reported unless its
