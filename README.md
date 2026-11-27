@@ -58,10 +58,10 @@ Why each rule leaks, with a leaky and a fixed example: [`docs/rules.md`](docs/ru
   executed, no LLM or API key is needed, and the result is the same on every run.
 - **Tracks where rows come from.** Every variable is labeled as all rows, training rows,
   test rows, or train and test mixed. A transformer fitted on all rows leaves a mark on its
-  output, and the mark is traced through reassignments, loops, `if` blocks and function
-  bodies to the split or cross-validation call it reaches.
-- **Tested against labeled examples.** [`examples/`](examples/) holds 31 leaky scripts with
-  the expected finding marked on its line, and 31 clean scripts, many of them near misses
+  output, and the mark is traced through reassignments, loops, `if` blocks and calls to
+  your own helper functions to the split or cross-validation call it reaches.
+- **Tested against labeled examples.** [`examples/`](examples/) holds 34 leaky scripts with
+  the expected finding marked on its line, and 33 clean scripts, many of them near misses
   (exploring the full data, refitting the final model after evaluation, a hand-written fold
   loop). Every active rule finds all of its leaky examples and flags no clean one.
 - **Tried on real code.** It parses scikit-learn's 671 source files in a few seconds
@@ -69,7 +69,7 @@ Why each rule leaks, with a leaky and a fixed example: [`docs/rules.md`](docs/ru
   alarm this trial found (fitting a calibrator on a held-out `X_cal`) is now fixed and in
   the corpus. That is one codebase, not a measured false-positive rate.
 
-What it does not follow yet (data passed between functions, dynamic code) is listed in
+What it does not follow yet (values stored on objects, dynamic code) is listed in
 [`docs/rules.md`](docs/rules.md#what-the-analyzer-follows).
 
 ## Try it

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Calls to functions defined in the same file or notebook are followed into their body
+  with the call's arguments, and the return value carries the marks of what happened
+  inside. A scaler fitted in a `preprocess(df)` helper, a split done by a helper, and leaky
+  features passed to an `evaluate(model, data=...)` helper that cross-validates are now
+  found. Calls are followed three levels deep; recursion is not followed.
+- A function from the project's own package that is given a data file path
+  (`load_raw(DATA_DIR / "train.csv")`) counts as a data source, a test file when the path
+  says `test`. Functions from `pathlib`, `os`, `joblib` and similar modules do not.
+
 ### Fixed
 - A project located inside a folder named `venv` or similar was skipped entirely; only folders
   inside the given path count now.

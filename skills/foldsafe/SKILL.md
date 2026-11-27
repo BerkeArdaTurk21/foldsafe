@@ -57,8 +57,8 @@ report each one you find even if foldsafe exits 0:
 - **Duplicates:** identical or near-identical rows on both sides of the split.
 - **Choosing by test score:** comparing models or settings on the test set, then reporting
   that score. Tune on validation folds and touch the test set once.
-- **Code foldsafe does not follow:** data passed between functions, values stored on objects
-  (`self.X`), helpers from the user's own modules. Trace those by hand.
+- **Code foldsafe does not follow:** values stored on objects (`self.X`), methods of the
+  user's classes, the bodies of helpers in other files or modules. Trace those by hand.
 - **Rules not in `rules_checked`:** check them by hand with the catalog.
 
 ## 5. Report
